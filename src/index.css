@@ -1,0 +1,147 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-base: #0E0E12;
+  --color-bg-surface: #18181F;
+  --color-bg-elevated: #22222C;
+  --color-accent-coral: #FF6B4A;
+  --color-accent-amber: #FF9F43;
+}
+
+@layer base {
+  body {
+    background-color: #0E0E12;
+    color: #F4F4F6;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+    margin: 0;
+  }
+}
+
+@import "tailwindcss";
+
+@keyframes imessageGlideIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0) scale(0.985);
+  }
+  65% {
+    opacity: 1;
+    transform: translate3d(0, -1.5px, 0) scale(1.004);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.animate-imessage-in {
+  animation: imessageGlideIn 320ms cubic-bezier(0.22, 1.12, 0.36, 1) both;
+  will-change: transform, opacity;
+}
+
+@import "tailwindcss";
+
+@keyframes imessageGlideIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0) scale(0.985);
+  }
+  65% {
+    opacity: 1;
+    transform: translate3d(0, -1.5px, 0) scale(1.004);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.animate-imessage-in {
+  animation: imessageGlideIn 320ms cubic-bezier(0.22, 1.12, 0.36, 1) both;
+  will-change: transform, opacity;
+}
+
+/* Light Mode Surface & Text Overrides */
+html.light-mode body,
+html.light-mode .bg-\[\#0E0E12\] {
+  background-color: #F6F7FA !important;
+  color: #14141A !important;
+}
+
+html.light-mode header {
+  background-color: rgba(255, 255, 255, 0.94) !important;
+  border-color: rgba(20, 20, 26, 0.1) !important;
+  color: #14141A !important;
+}
+
+html.light-mode aside {
+  border-color: rgba(20, 20, 26, 0.1) !important;
+}
+
+html.light-mode .bg-\[\#18181F\],
+html.light-mode .via-\[\#1C1C26\] {
+  background-color: #FFFFFF !important;
+  --tw-gradient-from: #FFFFFF !important;
+  --tw-gradient-via: #F7F8FC !important;
+  --tw-gradient-to: #FFFFFF !important;
+}
+
+html.light-mode .bg-\[\#14141A\] {
+  background-color: #F0F1F6 !important;
+}
+
+html.light-mode .bg-\[\#22222C\] {
+  background-color: #E8EAF0 !important;
+}
+
+html.light-mode .hover\:bg-\[\#22222C\]:hover,
+html.light-mode .hover\:bg-\[\#2C2C38\]:hover,
+html.light-mode .hover\:bg-\[\#18181F\]:hover,
+html.light-mode .hover\:bg-white\/5:hover {
+  background-color: #E2E5EC !important;
+}
+
+html.light-mode .text-white {
+  color: #14141A !important;
+}
+
+html.light-mode .text-zinc-100,
+html.light-mode .text-zinc-200 {
+  color: #1E1E28 !important;
+}
+
+html.light-mode .text-zinc-300,
+html.light-mode .text-zinc-400 {
+  color: #525260 !important;
+}
+
+html.light-mode .text-zinc-500 {
+  color: #6E6E7E !important;
+}
+
+html.light-mode .border-white\/10,
+html.light-mode .border-white\/15,
+html.light-mode .border-white\/5 {
+  border-color: rgba(20, 20, 26, 0.1) !important;
+}
+
+/* Preserve white text on primary coral-amber buttons & active nav pills */
+html.light-mode .bg-gradient-to-r.from-\[\#FF6B4A\],
+html.light-mode .bg-gradient-to-br.from-\[\#FF6B4A\],
+html.light-mode .bg-\[\#FF6B4A\],
+html.light-mode .bg-\[\#FF6B4A\] * {
+  color: #FFFFFF !important;
+}
+
+html.light-mode .bg-gradient-to-r.from-\[\#FF6B4A\] *,
+html.light-mode .bg-gradient-to-br.from-\[\#FF6B4A\] * {
+  color: #FFFFFF !important;
+}
+
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

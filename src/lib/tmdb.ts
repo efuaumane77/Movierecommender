@@ -96,3 +96,83 @@ export async function getWatchProviders(
         link: regionBlock?.link,
     }
 }
+
+export interface TMDBPersonCredit {
+    id: number
+    name: string
+    role: 'Director' | 'Actor'
+    character?: string
+    profile_path: string | null
+}
+
+export async function getMediaCredits(
+    mediaType: 'movie' | 'tv',
+    id: number
+): Promise<TMDBPersonCredit[]> {
+    const data = await tmdbFetch<{
+        cast?: { id: number; name: string; character?: string; profile_path: string | null }[]
+        crew?: { id: number; name: string; job?: string; profile_path: string | null }[]
+    }>(`/${mediaType}/${id}/credits`)
+
+    const directors: TMDBPersonCredit[] = (data.crew ?? [])
+        .filter((c) => c.job === 'Director')
+        .slice(0, 2)
+        .map((d) => ({
+            id: d.id,
+            name: d.name,
+            role: 'Director',
+            profile_path: d.profile_path,
+        }))
+
+    const topCast: TMDBPersonCredit[] = (data.cast ?? [])
+        .slice(0, 6)
+        .map((a) => ({
+            id: a.id,
+            name: a.name,
+            role: 'Actor',
+            character: a.character,
+            profile_path: a.profile_path,
+        }))
+
+    const seen = new Set<number>()
+    return [...directors, ...topCast].filter((p) => {
+        if (seen.has(p.id)) return false
+        seen.add(p.id)
+        return true
+    })
+}
+
+export async function getPersonFilmography(personId: number): Promise<TMDBSearchResult[]> {
+    const data = await tmdbFetch<{
+        cast?: (TMDBSearchResult & { vote_count?: number })[]
+        crew?: (TMDBSearchResult & { job?: string; vote_count?: number })[]
+    }>(`/person/${personId}/combined_credits`)
+
+    const directed = (data.crew ?? []).filter((c) => c.job === 'Director')
+    const acted = data.cast ?? []
+    const combined = [...directed, ...acted].filter(
+        (item) => (item.media_type === 'movie' || item.media_type === 'tv') && item.poster_path
+    )
+
+    const deduped = new Map<string, TMDBSearchResult & { vote_count?: number }>()
+    for (const item of combined) {
+        const key = `${item.media_type}-${item.id}`
+        if (!deduped.has(key)) deduped.set(key, item)
+    }
+
+    return Array.from(deduped.values())
+        .sort((a, b) => (b.vote_count ?? 0) - (a.vote_count ?? 0))
+        .slice(0, 12)
+}
+
+export async function getSimilarRecommendations(
+    mediaType: 'movie' | 'tv',
+    id: number
+): Promise<TMDBSearchResult[]> {
+    const data = await tmdbFetch<{ results?: TMDBSearchResult[] }>(
+        `/${mediaType}/${id}/recommendations`
+    )
+    return (data.results ?? [])
+        .filter((r) => (r.media_type === 'movie' || r.media_type === 'tv') && r.poster_path)
+        .slice(0, 8)
+}

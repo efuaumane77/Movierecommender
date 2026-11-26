@@ -49,6 +49,12 @@ interface SeedEntry {
     title?: string
 }
 
+interface FollowedPersonRow {
+    person_id: number
+    name: string
+    role: 'Actor' | 'Director'
+}
+
 export async function getPersonalizedRecommendations(params: {
     userId: string
     profile: Profile | null
@@ -58,26 +64,36 @@ export async function getPersonalizedRecommendations(params: {
 }): Promise<RecommendedItem[]> {
     const { userId, profile, myLogs, feedLogs, friendIds } = params
 
-    const [{ data: likedTrailers }, { data: trailerComments }, { data: trailerViews }] =
-        await Promise.all([
-            supabase
-                .from('trailer_likes')
-                .select('tmdb_id, media_type, created_at')
-                .eq('user_id', userId)
-                .order('created_at', { ascending: false })
-                .limit(25),
-            supabase
-                .from('trailer_comments')
-                .select('tmdb_id, media_type, rating')
-                .eq('user_id', userId)
-                .limit(25),
-            supabase
-                .from('trailer_views')
-                .select('tmdb_id, media_type, watch_seconds, duration_seconds, completion_rate')
-                .eq('user_id', userId)
-                .order('updated_at', { ascending: false })
-                .limit(40),
-        ])
+    const [
+        { data: likedTrailers },
+        { data: trailerComments },
+        { data: trailerViews },
+        { data: followedPeople },
+    ] = await Promise.all([
+        supabase
+            .from('trailer_likes')
+            .select('tmdb_id, media_type, created_at')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(25),
+        supabase
+            .from('trailer_comments')
+            .select('tmdb_id, media_type, rating')
+            .eq('user_id', userId)
+            .limit(25),
+        supabase
+            .from('trailer_views')
+            .select('tmdb_id, media_type, watch_seconds, duration_seconds, completion_rate')
+            .eq('user_id', userId)
+            .order('updated_at', { ascending: false })
+            .limit(40),
+        supabase
+            .from('followed_people')
+            .select('person_id, name, role')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(12),
+    ])
 
     const seenKeys = new Set<string>(myLogs.map((l) => `${l.media_type}-${l.tmdb_id}`))
     const seedMap = new Map<string, SeedEntry>()
@@ -162,6 +178,7 @@ export async function getPersonalizedRecommendations(params: {
         .slice(0, 4)
 
     const candidateMap = new Map<string, RecommendedItem>()
+    const personPicks = new Map<string, string>()
 
     const tasks: Promise<void>[] = topPositiveSeeds.map(async (seed) => {
         try {
@@ -196,6 +213,63 @@ export async function getPersonalizedRecommendations(params: {
             // ignore missing recommendations
         }
     })
+
+    // Followed actors & directors filmography boost
+    const followedList = ((followedPeople ?? []) as FollowedPersonRow[]).slice(0, 4)
+    for (const person of followedList) {
+        tasks.push(
+            tmdbFetchJson<{
+                cast?: Array<Record<string, unknown>>
+                crew?: Array<Record<string, unknown>>
+            }>(`/person/${person.person_id}/combined_credits`)
+                .then((credits) => {
+                    const directed = (credits.crew ?? []).filter((c) => c.job === 'Director')
+                    const acted = credits.cast ?? []
+                    const pool = [...directed, ...acted]
+                        .filter((item) => {
+                            const mType = item.media_type
+                            return (mType === 'movie' || mType === 'tv') && Boolean(item.poster_path)
+                        })
+                        .sort((a, b) => Number(b.vote_count || 0) - Number(a.vote_count || 0))
+                        .slice(0, 5)
+
+                    for (const raw of pool) {
+                        const mediaType = raw.media_type === 'tv' ? 'tv' : 'movie'
+                        const id = Number(raw.id)
+                        const key = `${mediaType}-${id}`
+                        if (!id || seenKeys.has(key)) continue
+
+                        const gids = Array.isArray(raw.genre_ids) ? (raw.genre_ids as number[]) : []
+                        for (const gid of gids) {
+                            genreWeights.set(gid, (genreWeights.get(gid) ?? 0) + 1.0)
+                        }
+
+                        if (!personPicks.has(key)) {
+                            personPicks.set(
+                                key,
+                                person.role === 'Director'
+                                    ? `Directed by ${person.name}`
+                                    : `Starring ${person.name}`
+                            )
+                        }
+
+                        const existing = candidateMap.get(key)
+                        candidateMap.set(key, {
+                            id,
+                            media_type: mediaType,
+                            title: String(raw.title || raw.name || 'Untitled'),
+                            poster_path: (raw.poster_path as string) ?? null,
+                            overview: String(raw.overview || ''),
+                            release_date: String(raw.release_date || raw.first_air_date || ''),
+                            genre_ids: gids,
+                            popularity: Number(raw.popularity || 0),
+                            score: (existing?.score ?? 0) + 4.0,
+                        })
+                    }
+                })
+                .catch(() => {})
+        )
+    }
 
     const topGenreIds = Array.from(genreWeights.entries())
         .filter(([, w]) => w > 0)
@@ -277,6 +351,8 @@ export async function getPersonalizedRecommendations(params: {
         if (friendUsername) {
             item.score += 4.5
             item.reason = `Rated ★4+ by @${friendUsername}`
+        } else if (personPicks.has(key)) {
+            item.reason = personPicks.get(key)
         }
     }
 

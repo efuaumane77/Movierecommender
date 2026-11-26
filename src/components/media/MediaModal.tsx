@@ -1,10 +1,34 @@
 import { useState, useEffect } from 'react'
-import { X, Play, Check, Tv, ListPlus, Award, Trash2, ChevronDown, FolderPlus } from 'lucide-react'
-import { posterUrl, getTrailerKey, getWatchProviders, type WatchProvidersSummary } from '../../lib/tmdb'
+import {
+    X,
+    Play,
+    Check,
+    Tv,
+    ListPlus,
+    Award,
+    Trash2,
+    ChevronDown,
+    FolderPlus,
+    UserPlus,
+    UserCheck,
+    Sparkles,
+    Users,
+} from 'lucide-react'
+import {
+    posterUrl,
+    getTrailerKey,
+    getWatchProviders,
+    getMediaCredits,
+    getPersonFilmography,
+    getSimilarRecommendations,
+    type WatchProvidersSummary,
+    type TMDBPersonCredit,
+    type TMDBSearchResult,
+} from '../../lib/tmdb'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import type { CustomList, FavoritePin, MediaLog, MediaStatus } from '../../types/database'
 import { StarRatingInput } from './StarRatingInput'
+import type { CustomList, FavoritePin, MediaLog, MediaStatus } from '../../types/database'
 
 export interface SelectedMedia {
     tmdb_id: number
@@ -23,6 +47,7 @@ interface MediaModalProps {
 
 export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalProps) {
     const { user, profile, setLocalTopFavorites, refreshProfile } = useAuth()
+    const [activeMedia, setActiveMedia] = useState<SelectedMedia | null>(media)
     const [status, setStatus] = useState<MediaStatus>('watchlist')
     const [rating, setRating] = useState<number>(0)
     const [reviewText, setReviewText] = useState('')
@@ -42,13 +67,32 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
     const [savingLibrary, setSavingLibrary] = useState(false)
     const [pinBusy, setPinBusy] = useState(false)
 
+    // Cast, Crew, Followed People & Similar Titles
+    const [credits, setCredits] = useState<TMDBPersonCredit[]>([])
+    const [followedPersonIds, setFollowedPersonIds] = useState<Set<number>>(new Set())
+    const [selectedPerson, setSelectedPerson] = useState<TMDBPersonCredit | null>(null)
+    const [personCredits, setPersonCredits] = useState<TMDBSearchResult[]>([])
+    const [loadingPerson, setLoadingPerson] = useState(false)
+    const [togglingPersonId, setTogglingPersonId] = useState<number | null>(null)
+    const [similarItems, setSimilarItems] = useState<TMDBSearchResult[]>([])
+
     useEffect(() => {
-        if (!media) return
-        setStatus(existingLog?.status ?? 'watchlist')
-        setRating(existingLog?.rating ?? 0)
-        setReviewText(existingLog?.review_text ?? '')
-        setSeason(existingLog?.season ?? 1)
-        setEpisode(existingLog?.episode ?? 1)
+        setActiveMedia(media)
+    }, [media])
+
+    useEffect(() => {
+        if (!activeMedia) return
+        const isSameAsInitial =
+            media &&
+            activeMedia.tmdb_id === media.tmdb_id &&
+            activeMedia.media_type === media.media_type
+
+        setStatus(isSameAsInitial && existingLog ? existingLog.status : 'watchlist')
+        setRating(isSameAsInitial && existingLog?.rating ? existingLog.rating : 0)
+        setReviewText(isSameAsInitial && existingLog?.review_text ? existingLog.review_text : '')
+        setSeason(isSameAsInitial && existingLog?.season ? existingLog.season : 1)
+        setEpisode(isSameAsInitial && existingLog?.episode ? existingLog.episode : 1)
+
         setShowTrailer(false)
         setTrailerKey(null)
         setProviders(null)
@@ -59,13 +103,26 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         setPinBusy(false)
         setRemovingLog(false)
 
-        getTrailerKey(media.media_type, media.tmdb_id)
+        setCredits([])
+        setSelectedPerson(null)
+        setPersonCredits([])
+        setSimilarItems([])
+
+        getTrailerKey(activeMedia.media_type, activeMedia.tmdb_id)
             .then(setTrailerKey)
             .catch(() => setTrailerKey(null))
 
-        getWatchProviders(media.media_type, media.tmdb_id, 'CA')
+        getWatchProviders(activeMedia.media_type, activeMedia.tmdb_id, 'CA')
             .then(setProviders)
             .catch(() => setProviders(null))
+
+        getMediaCredits(activeMedia.media_type, activeMedia.tmdb_id)
+            .then(setCredits)
+            .catch(() => setCredits([]))
+
+        getSimilarRecommendations(activeMedia.media_type, activeMedia.tmdb_id)
+            .then(setSimilarItems)
+            .catch(() => setSimilarItems([]))
 
         if (user) {
             supabase
@@ -79,36 +136,128 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                     if (rows.length > 0) setSelectedListId(rows[0].id)
                     else setCreatingNewLibrary(true)
                 })
-        }
-    }, [media, existingLog, user])
 
-    if (!media) return null
+            supabase
+                .from('followed_people')
+                .select('person_id')
+                .eq('user_id', user.id)
+                .then(({ data }) => {
+                    const ids = new Set<number>(
+                        ((data as { person_id: number }[]) ?? []).map((r) => Number(r.person_id))
+                    )
+                    setFollowedPersonIds(ids)
+                })
+        }
+    }, [activeMedia, existingLog, media, user])
+
+    if (!activeMedia) return null
+
+    const isInitialMedia = Boolean(
+        media &&
+        activeMedia.tmdb_id === media.tmdb_id &&
+        activeMedia.media_type === media.media_type
+    )
+    const activeExistingLog = isInitialMedia ? existingLog : undefined
 
     const currentPins: FavoritePin[] = Array.isArray(profile?.top_favorites)
         ? [...profile.top_favorites]
         : []
 
     const isPinned = currentPins.some(
-        (p) => p.tmdb_id === media.tmdb_id && p.media_type === media.media_type
+        (p) => p.tmdb_id === activeMedia.tmdb_id && p.media_type === activeMedia.media_type
     )
+
+    async function handleInspectPerson(person: TMDBPersonCredit) {
+        if (selectedPerson?.id === person.id) {
+            setSelectedPerson(null)
+            setPersonCredits([])
+            return
+        }
+        setSelectedPerson(person)
+        setLoadingPerson(true)
+        setPersonCredits([])
+        try {
+            const works = await getPersonFilmography(person.id)
+            setPersonCredits(works)
+        } catch {
+            setPersonCredits([])
+        } finally {
+            setLoadingPerson(false)
+        }
+    }
+
+    async function handleToggleFollowPerson(person: TMDBPersonCredit) {
+        if (!user || togglingPersonId === person.id) return
+        setTogglingPersonId(person.id)
+        const alreadyFollowing = followedPersonIds.has(person.id)
+
+        // Optimistic update
+        setFollowedPersonIds((prev) => {
+            const next = new Set(prev)
+            if (alreadyFollowing) next.delete(person.id)
+            else next.add(person.id)
+            return next
+        })
+
+        if (alreadyFollowing) {
+            const { error } = await supabase
+                .from('followed_people')
+                .delete()
+                .eq('user_id', user.id)
+                .eq('person_id', person.id)
+
+            if (error) {
+                setFollowedPersonIds((prev) => new Set(prev).add(person.id))
+            }
+        } else {
+            const { error } = await supabase.from('followed_people').insert({
+                user_id: user.id,
+                person_id: person.id,
+                name: person.name,
+                role: person.role,
+                profile_path: person.profile_path,
+            })
+
+            if (error) {
+                setFollowedPersonIds((prev) => {
+                    const next = new Set(prev)
+                    next.delete(person.id)
+                    return next
+                })
+            }
+        }
+
+        setTogglingPersonId(null)
+    }
+
+    function handleJumpToMedia(item: TMDBSearchResult) {
+        const title = item.title || item.name || 'Untitled'
+        setActiveMedia({
+            tmdb_id: item.id,
+            media_type: item.media_type,
+            title,
+            poster_path: item.poster_path,
+            overview: item.overview,
+        })
+    }
 
     async function handleSave(e: React.FormEvent) {
         e.preventDefault()
-        if (!user || !media) return
+        if (!user || !activeMedia) return
         setSaving(true)
 
         const { error } = await supabase.from('media_logs').upsert(
             {
                 user_id: user.id,
-                tmdb_id: media.tmdb_id,
-                media_type: media.media_type,
-                title: media.title,
-                poster_path: media.poster_path,
+                tmdb_id: activeMedia.tmdb_id,
+                media_type: activeMedia.media_type,
+                title: activeMedia.title,
+                poster_path: activeMedia.poster_path,
                 status,
                 rating: rating > 0 ? rating : null,
                 review_text: reviewText.trim() || null,
-                season: media.media_type === 'tv' ? season : 1,
-                episode: media.media_type === 'tv' ? episode : 0,
+                season: activeMedia.media_type === 'tv' ? season : 1,
+                episode: activeMedia.media_type === 'tv' ? episode : 0,
                 updated_at: new Date().toISOString(),
             },
             { onConflict: 'user_id,tmdb_id,media_type' }
@@ -122,18 +271,22 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
     }
 
     async function handleRemoveFromProfile() {
-        if (!user || !media || !existingLog || removingLog) return
+        if (!user || !activeMedia || !activeExistingLog || removingLog) return
         setRemovingLog(true)
 
         const { error } = await supabase
             .from('media_logs')
             .delete()
-            .eq('id', existingLog.id)
+            .eq('id', activeExistingLog.id)
             .eq('user_id', user.id)
 
         if (!error && isPinned) {
             const nextPins = currentPins.filter(
-                (p) => !(p.tmdb_id === media.tmdb_id && p.media_type === media.media_type)
+                (p) =>
+                    !(
+                        p.tmdb_id === activeMedia.tmdb_id &&
+                        p.media_type === activeMedia.media_type
+                    )
             )
             setLocalTopFavorites(nextPins)
             await supabase
@@ -151,17 +304,17 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
     }
 
     async function handleAddToLibrary() {
-        if (!user || !media || !selectedListId) return
+        if (!user || !activeMedia || !selectedListId) return
         setListStatusMsg(null)
 
         const { error } = await supabase.from('custom_list_items').upsert(
             {
                 list_id: selectedListId,
                 added_by: user.id,
-                tmdb_id: media.tmdb_id,
-                media_type: media.media_type,
-                title: media.title,
-                poster_path: media.poster_path,
+                tmdb_id: activeMedia.tmdb_id,
+                media_type: activeMedia.media_type,
+                title: activeMedia.title,
+                poster_path: activeMedia.poster_path,
             },
             { onConflict: 'list_id,tmdb_id,media_type' }
         )
@@ -174,7 +327,7 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
     }
 
     async function handleCreateLibraryAndAdd() {
-        if (!user || !media || !newLibraryTitle.trim() || savingLibrary) return
+        if (!user || !activeMedia || !newLibraryTitle.trim() || savingLibrary) return
         setSavingLibrary(true)
         setListStatusMsg(null)
 
@@ -199,10 +352,10 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
             {
                 list_id: typedList.id,
                 added_by: user.id,
-                tmdb_id: media.tmdb_id,
-                media_type: media.media_type,
-                title: media.title,
-                poster_path: media.poster_path,
+                tmdb_id: activeMedia.tmdb_id,
+                media_type: activeMedia.media_type,
+                title: activeMedia.title,
+                poster_path: activeMedia.poster_path,
             },
             { onConflict: 'list_id,tmdb_id,media_type' }
         )
@@ -221,18 +374,22 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
     }
 
     async function handlePinToTopFour() {
-        if (!user || !media || pinBusy) return
+        if (!user || !activeMedia || pinBusy) return
         setPinBusy(true)
 
         const nextPins: FavoritePin[] = [
             {
-                tmdb_id: media.tmdb_id,
-                media_type: media.media_type,
-                title: media.title,
-                poster_path: media.poster_path,
+                tmdb_id: activeMedia.tmdb_id,
+                media_type: activeMedia.media_type,
+                title: activeMedia.title,
+                poster_path: activeMedia.poster_path,
             },
             ...currentPins.filter(
-                (p) => !(p.tmdb_id === media.tmdb_id && p.media_type === media.media_type)
+                (p) =>
+                    !(
+                        p.tmdb_id === activeMedia.tmdb_id &&
+                        p.media_type === activeMedia.media_type
+                    )
             ),
         ].slice(0, 4)
 
@@ -252,11 +409,15 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
     }
 
     async function handleRemoveFromTopFour() {
-        if (!user || !media || pinBusy) return
+        if (!user || !activeMedia || pinBusy) return
         setPinBusy(true)
 
         const nextPins: FavoritePin[] = currentPins.filter(
-            (p) => !(p.tmdb_id === media.tmdb_id && p.media_type === media.media_type)
+            (p) =>
+                !(
+                    p.tmdb_id === activeMedia.tmdb_id &&
+                    p.media_type === activeMedia.media_type
+                )
         )
 
         setLocalTopFavorites(nextPins)
@@ -280,12 +441,13 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
 
     return (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="w-full max-w-lg max-h-[90dvh] overflow-y-auto bg-[#18181F] border border-white/15 rounded-2xl shadow-2xl">
+            <div className="w-full max-w-lg max-h-[90dvh] overflow-y-auto no-scrollbar bg-[#18181F] border border-white/15 rounded-2xl shadow-2xl">
+                {/* Header */}
                 <div className="flex items-start gap-4 p-5 border-b border-white/10">
-                    {media.poster_path ? (
+                    {activeMedia.poster_path ? (
                         <img
-                            src={posterUrl(media.poster_path, 'w185')}
-                            alt={media.title}
+                            src={posterUrl(activeMedia.poster_path, 'w185')}
+                            alt={activeMedia.title}
                             className="w-20 h-28 rounded-xl object-cover shrink-0"
                         />
                     ) : (
@@ -294,16 +456,23 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
 
                     <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2">
-                            <h2 className="text-lg font-bold text-white leading-tight">{media.title}</h2>
-                            <button onClick={onClose} className="text-zinc-400 hover:text-white cursor-pointer">
+                            <h2 className="text-lg font-bold text-white leading-tight">
+                                {activeMedia.title}
+                            </h2>
+                            <button
+                                onClick={onClose}
+                                className="text-zinc-400 hover:text-white cursor-pointer"
+                            >
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
                         <p className="text-xs text-zinc-400 mt-1 uppercase tracking-wider">
-                            {media.media_type === 'tv' ? 'TV Series' : 'Movie'}
+                            {activeMedia.media_type === 'tv' ? 'TV Series' : 'Movie'}
                         </p>
-                        {media.overview && (
-                            <p className="text-xs text-zinc-400 mt-2 line-clamp-2">{media.overview}</p>
+                        {activeMedia.overview && (
+                            <p className="text-xs text-zinc-400 mt-2 line-clamp-2">
+                                {activeMedia.overview}
+                            </p>
                         )}
 
                         <div className="mt-2.5 flex items-center gap-3 flex-wrap">
@@ -345,6 +514,7 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                     </div>
                 </div>
 
+                {/* Streaming Providers */}
                 {cleanFlatrate.length > 0 && (
                     <div className="px-5 py-2.5 bg-[#14141A] border-b border-white/10 flex items-center justify-between gap-2 flex-wrap">
                         <span className="text-[11px] font-semibold text-zinc-400 flex items-center gap-1.5">
@@ -369,18 +539,160 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                     </div>
                 )}
 
+                {/* Embedded Trailer */}
                 {showTrailer && trailerKey && (
                     <div className="aspect-video w-full bg-black">
                         <iframe
                             className="w-full h-full"
                             src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1`}
-                            title={media.title}
+                            title={activeMedia.title}
                             allow="autoplay; encrypted-media"
                             allowFullScreen
                         />
                     </div>
                 )}
 
+                {/* Director & Cast Strip + Inline Filmography Drawer */}
+                {credits.length > 0 && (
+                    <div className="px-5 py-3 bg-[#14141A] border-b border-white/10 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-zinc-400 flex items-center gap-1.5">
+                                <Users className="w-3.5 h-3.5 text-[#FF6B4A]" /> Director &amp; Cast
+                            </span>
+                            <span className="text-[10px] text-zinc-500">
+                                Tap to follow or see films
+                            </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+                            {credits.map((person) => {
+                                const isFollowing = followedPersonIds.has(person.id)
+                                const isSelected = selectedPerson?.id === person.id
+
+                                return (
+                                    <button
+                                        key={`${person.role}-${person.id}`}
+                                        type="button"
+                                        onClick={() => handleInspectPerson(person)}
+                                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border text-left shrink-0 transition cursor-pointer ${
+                                            isSelected
+                                                ? 'bg-[#FF6B4A]/20 border-[#FF6B4A] text-white'
+                                                : 'bg-[#22222C] hover:bg-[#2C2C38] border-white/10 text-zinc-200'
+                                        }`}
+                                    >
+                                        {person.profile_path ? (
+                                            <img
+                                                src={posterUrl(person.profile_path, 'w185')}
+                                                alt={person.name}
+                                                className="w-6 h-6 rounded-full object-cover shrink-0"
+                                            />
+                                        ) : (
+                                            <div className="w-6 h-6 rounded-full bg-[#18181F] flex items-center justify-center text-[10px] font-bold text-zinc-400 shrink-0">
+                                                {person.name[0]}
+                                            </div>
+                                        )}
+
+                                        <div className="min-w-0">
+                                            <p className="text-[11px] font-semibold leading-tight truncate max-w-[110px]">
+                                                {person.name}
+                                            </p>
+                                            <p className="text-[9px] text-zinc-400 leading-tight">
+                                                {person.role}
+                                                {isFollowing ? ' • Following' : ''}
+                                            </p>
+                                        </div>
+                                    </button>
+                                )
+                            })}
+                        </div>
+
+                        {/* Expanded Filmography Drawer for Selected Actor/Director */}
+                        {selectedPerson && (
+                            <div className="bg-[#18181F] border border-white/10 rounded-xl p-3 space-y-2.5">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="min-w-0">
+                                        <p className="text-xs font-bold text-white truncate">
+                                            {selectedPerson.name}
+                                        </p>
+                                        <p className="text-[10px] text-zinc-400">
+                                            {selectedPerson.role} • Known for
+                                        </p>
+                                    </div>
+
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                        {user && (
+                                            <button
+                                                type="button"
+                                                disabled={togglingPersonId === selectedPerson.id}
+                                                onClick={() => handleToggleFollowPerson(selectedPerson)}
+                                                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 transition cursor-pointer ${
+                                                    followedPersonIds.has(selectedPerson.id)
+                                                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                                        : 'bg-[#FF6B4A] hover:bg-[#FF9F43] text-white'
+                                                }`}
+                                            >
+                                                {followedPersonIds.has(selectedPerson.id) ? (
+                                                    <>
+                                                        <UserCheck className="w-3 h-3" /> Following
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <UserPlus className="w-3 h-3" /> Follow
+                                                    </>
+                                                )}
+                                            </button>
+                                        )}
+
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedPerson(null)}
+                                            className="p-1 text-zinc-400 hover:text-white cursor-pointer"
+                                        >
+                                            <X className="w-3.5 h-3.5" />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {loadingPerson ? (
+                                    <p className="text-[11px] text-zinc-400 py-2">
+                                        Loading filmography...
+                                    </p>
+                                ) : personCredits.length === 0 ? (
+                                    <p className="text-[11px] text-zinc-500">No titles found.</p>
+                                ) : (
+                                    <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
+                                        {personCredits.map((work) => {
+                                            const workTitle = work.title || work.name || 'Untitled'
+                                            return (
+                                                <button
+                                                    key={`${work.media_type}-${work.id}`}
+                                                    type="button"
+                                                    onClick={() => handleJumpToMedia(work)}
+                                                    className="w-20 shrink-0 text-left group cursor-pointer"
+                                                >
+                                                    {work.poster_path ? (
+                                                        <img
+                                                            src={posterUrl(work.poster_path, 'w185')}
+                                                            alt={workTitle}
+                                                            className="w-full aspect-[2/3] rounded-lg object-cover border border-white/10 group-hover:border-[#FF6B4A] transition"
+                                                        />
+                                                    ) : (
+                                                        <div className="w-full aspect-[2/3] rounded-lg bg-[#22222C]" />
+                                                    )}
+                                                    <p className="text-[10px] font-semibold text-zinc-200 group-hover:text-[#FF9F43] truncate mt-1">
+                                                        {workTitle}
+                                                    </p>
+                                                </button>
+                                            )
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Logging & Rating Form */}
                 <form onSubmit={handleSave} className="p-5 space-y-4">
                     <div>
                         <label className="block text-xs text-zinc-400 mb-1.5">Shelf Status</label>
@@ -402,7 +714,7 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                         </div>
                     </div>
 
-                    {media.media_type === 'tv' && (
+                    {activeMedia.media_type === 'tv' && (
                         <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <label className="block text-xs text-zinc-400 mb-1">Season</label>
@@ -415,7 +727,9 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                                 />
                             </div>
                             <div>
-                                <label className="block text-xs text-zinc-400 mb-1">Episode (Spoiler Gate)</label>
+                                <label className="block text-xs text-zinc-400 mb-1">
+                                    Episode (Spoiler Gate)
+                                </label>
                                 <input
                                     type="number"
                                     min={0}
@@ -429,18 +743,32 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
 
                     <div>
                         <label className="block text-xs text-zinc-400 mb-1.5">Your Rating</label>
-                        <StarRatingInput value={rating} onChange={setRating} />
+                        <StarRatingInput
+                            value={rating}
+                            onChange={(next) => {
+                                setRating(next)
+                                if (next > 0 && status === 'watchlist') setStatus('watched')
+                            }}
+                        />
                     </div>
 
                     <div>
                         <label className="block text-xs text-zinc-400 mb-1">
-                            Thoughts / Reaction {media.media_type === 'tv' && '(Auto-blurred for friends behind your episode)'}
+                            Thoughts / Reaction{' '}
+                            {activeMedia.media_type === 'tv' &&
+                                '(Auto-blurred for friends behind your episode)'}
                         </label>
                         <textarea
                             rows={3}
                             placeholder="Write a quick review or episode reaction..."
                             value={reviewText}
-                            onChange={(e) => setReviewText(e.target.value)}
+                            onChange={(e) => {
+                                const val = e.target.value
+                                setReviewText(val)
+                                if (val.trim().length > 0 && status === 'watchlist') {
+                                    setStatus('watched')
+                                }
+                            }}
                             className="w-full bg-[#22222C] border border-white/10 rounded-xl p-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-[#FF6B4A]"
                         />
                     </div>
@@ -515,7 +843,7 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                     )}
 
                     <div className="flex items-center gap-2.5 pt-1">
-                        {existingLog && (
+                        {activeExistingLog && (
                             <button
                                 type="button"
                                 disabled={removingLog || saving}
@@ -537,6 +865,42 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                         </button>
                     </div>
                 </form>
+
+                {/* More Like This Strip */}
+                {similarItems.length > 0 && (
+                    <div className="px-5 py-4 bg-[#14141A] border-t border-white/10 space-y-2.5">
+                        <span className="text-[11px] font-semibold text-zinc-400 flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-[#FF9F43]" /> More Like This
+                        </span>
+
+                        <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1">
+                            {similarItems.map((sim) => {
+                                const simTitle = sim.title || sim.name || 'Untitled'
+                                return (
+                                    <button
+                                        key={`${sim.media_type}-${sim.id}`}
+                                        type="button"
+                                        onClick={() => handleJumpToMedia(sim)}
+                                        className="w-20 shrink-0 text-left group cursor-pointer"
+                                    >
+                                        {sim.poster_path ? (
+                                            <img
+                                                src={posterUrl(sim.poster_path, 'w185')}
+                                                alt={simTitle}
+                                                className="w-full aspect-[2/3] rounded-lg object-cover border border-white/10 group-hover:border-[#FF6B4A] transition"
+                                            />
+                                        ) : (
+                                            <div className="w-full aspect-[2/3] rounded-lg bg-[#22222C]" />
+                                        )}
+                                        <p className="text-[10px] font-semibold text-zinc-200 group-hover:text-[#FF9F43] truncate mt-1">
+                                            {simTitle}
+                                        </p>
+                                    </button>
+                                )
+                            })}
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     )

@@ -14,6 +14,7 @@ import {
     ArrowRight,
     MessageSquare,
     Wand2,
+    Eye,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
@@ -38,7 +39,17 @@ interface FeedPageProps {
     onLogsUpdated?: () => void
 }
 
-type FeedFilter = 'all' | 'friends' | 'reviews' | 'watching'
+type FeedFilter = 'all' | 'friends' | 'friends-watched' | 'reviews' | 'watching'
+
+interface FriendWatchedCard {
+    key: string
+    tmdb_id: number
+    media_type: 'movie' | 'tv'
+    title: string
+    poster_path: string | null
+    watchers: string[]
+    topRating: number | null
+}
 
 async function shareReviewToFriend(
     senderId: string,
@@ -149,6 +160,38 @@ export function FeedPage({
         }
     }, [user, profile, myLogs, feedLogs, friendIds])
 
+    const friendsWatchedItems = useMemo(() => {
+        const grouped = new Map<string, FriendWatchedCard>()
+        for (const log of feedLogs) {
+            if (!friendIds.has(log.user_id) || log.status !== 'watched') continue
+            const key = `${log.media_type}-${log.tmdb_id}`
+            const username = log.profiles?.username ?? 'friend'
+            const existing = grouped.get(key)
+            if (existing) {
+                if (!existing.watchers.includes(username)) {
+                    existing.watchers.push(username)
+                }
+                if (
+                    log.rating !== null &&
+                    (existing.topRating === null || log.rating > existing.topRating)
+                ) {
+                    existing.topRating = log.rating
+                }
+            } else {
+                grouped.set(key, {
+                    key,
+                    tmdb_id: log.tmdb_id,
+                    media_type: log.media_type,
+                    title: log.title,
+                    poster_path: log.poster_path,
+                    watchers: [username],
+                    topRating: log.rating,
+                })
+            }
+        }
+        return Array.from(grouped.values()).slice(0, 14)
+    }, [feedLogs, friendIds])
+
     const joinedForums = useMemo(
         () => GENRE_FORUMS.filter((f) => joinedForumSlugs.includes(f.slug)),
         [joinedForumSlugs]
@@ -166,6 +209,9 @@ export function FeedPage({
         return feedLogs.filter((log) => {
             if (feedFilter === 'friends') {
                 return friendIds.has(log.user_id) || log.user_id === user?.id
+            }
+            if (feedFilter === 'friends-watched') {
+                return friendIds.has(log.user_id) && log.status === 'watched'
             }
             if (feedFilter === 'reviews') {
                 return Boolean(log.review_text && log.review_text.trim().length > 0)
@@ -329,10 +375,6 @@ export function FeedPage({
 
                                         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-95" />
 
-                                        <span className="absolute top-2 left-2 right-10 px-2 py-0.5 rounded-full bg-black/75 backdrop-blur-xs border border-white/10 text-[9px] font-semibold text-[#FF9F43] truncate">
-                                            {item.reason}
-                                        </span>
-
                                         <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/65 backdrop-blur-xs border border-white/15 flex items-center justify-center text-white group-hover:bg-[#FF6B4A] transition">
                                             <Play className="w-3 h-3 fill-current ml-0.5" />
                                         </span>
@@ -343,6 +385,11 @@ export function FeedPage({
                                                 {item.media_type === 'tv' ? 'Series' : 'Movie'}
                                                 {year ? ` • ${year}` : ''}
                                             </p>
+                                            {item.reason && (
+                                                <p className="text-[10px] font-semibold text-[#FF9F43] truncate mt-0.5">
+                                                    {item.reason}
+                                                </p>
+                                            )}
                                         </div>
                                     </div>
 
@@ -390,6 +437,112 @@ export function FeedPage({
                     </div>
                 )}
             </section>
+
+            {/* Friends Have Watched Carousel */}
+            {friendsWatchedItems.length > 0 && (
+                <section className="space-y-3">
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
+                            <Eye className="w-4 h-4 text-emerald-400" /> Friends Have Watched
+                        </h2>
+                        <span className="text-[11px] text-zinc-400">
+                            Recently finished by people you follow
+                        </span>
+                    </div>
+
+                    <div className="flex gap-3 overflow-x-auto pb-2 snap-x">
+                        {friendsWatchedItems.map((item) => {
+                            const inWatchlist = myWatchlistKeys.has(item.key)
+                            const busy = togglingKey === item.key
+                            const watcherLabel =
+                                item.watchers.length === 1
+                                    ? `@${item.watchers[0]}`
+                                    : `@${item.watchers[0]} +${item.watchers.length - 1}`
+                            const mediaPayload: SelectedMedia = {
+                                tmdb_id: item.tmdb_id,
+                                media_type: item.media_type,
+                                title: item.title,
+                                poster_path: item.poster_path,
+                            }
+
+                            return (
+                                <div
+                                    key={item.key}
+                                    className="w-36 sm:w-40 shrink-0 snap-start bg-[#18181F] border border-white/10 rounded-2xl overflow-hidden flex flex-col justify-between group"
+                                >
+                                    <div
+                                        onClick={() => setPreviewMedia(mediaPayload)}
+                                        className="relative cursor-pointer"
+                                    >
+                                        {item.poster_path ? (
+                                            <img
+                                                src={posterUrl(item.poster_path, 'w342')}
+                                                alt={item.title}
+                                                className="w-full aspect-[2/3] object-cover group-hover:scale-105 transition duration-300"
+                                            />
+                                        ) : (
+                                            <div className="w-full aspect-[2/3] bg-[#22222C]" />
+                                        )}
+
+                                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-95" />
+
+                                        <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/65 backdrop-blur-xs border border-white/15 flex items-center justify-center text-white group-hover:bg-[#FF6B4A] transition">
+                                            <Play className="w-3 h-3 fill-current ml-0.5" />
+                                        </span>
+
+                                        <div className="absolute bottom-2 inset-x-2.5">
+                                            <p className="text-xs font-bold text-white truncate">{item.title}</p>
+                                            <p className="text-[10px] font-semibold text-emerald-400 truncate mt-0.5">
+                                                {watcherLabel}
+                                                {item.topRating !== null ? ` • ★ ${item.topRating}` : ''}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="p-2 flex items-center gap-1.5 bg-[#14141A]">
+                                        <button
+                                            type="button"
+                                            disabled={busy}
+                                            onClick={() =>
+                                                handleToggleWatchlistItem({
+                                                    tmdb_id: item.tmdb_id,
+                                                    media_type: item.media_type,
+                                                    title: item.title,
+                                                    poster_path: item.poster_path,
+                                                })
+                                            }
+                                            className={`flex-1 py-1.5 rounded-lg text-[10px] font-semibold flex items-center justify-center gap-1 transition cursor-pointer ${
+                                                inWatchlist
+                                                    ? 'bg-[#FF6B4A]/20 text-[#FF9F43] border border-[#FF6B4A]/40'
+                                                    : 'bg-[#22222C] hover:bg-[#2C2C38] text-zinc-200'
+                                            }`}
+                                        >
+                                            {inWatchlist ? (
+                                                <>
+                                                    <Bookmark className="w-2.5 h-2.5 fill-[#FF9F43]" /> Saved
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Plus className="w-2.5 h-2.5" /> Watchlist
+                                                </>
+                                            )}
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => onOpenMedia?.(mediaPayload)}
+                                            title="Rate or log"
+                                            className="px-2 py-1.5 rounded-lg bg-[#22222C] hover:bg-[#FF6B4A] text-zinc-300 hover:text-white text-[10px] font-semibold transition cursor-pointer"
+                                        >
+                                            Log
+                                        </button>
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+                </section>
+            )}
 
             {/* Tonight's Trending Carousel */}
             <section className="space-y-3">
@@ -561,11 +714,12 @@ export function FeedPage({
                         </span>
                     </h1>
 
-                    <div className="flex items-center gap-1.5 bg-[#18181F] p-1 rounded-xl border border-white/10 w-fit">
+                    <div className="flex items-center gap-1.5 bg-[#18181F] p-1 rounded-xl border border-white/10 w-fit flex-wrap">
                         {(
                             [
                                 { id: 'all', label: 'All' },
                                 { id: 'friends', label: 'Friends' },
+                                { id: 'friends-watched', label: 'Friends Watched' },
                                 { id: 'reviews', label: 'Reviews' },
                                 { id: 'watching', label: 'Watching' },
                             ] as { id: FeedFilter; label: string }[]

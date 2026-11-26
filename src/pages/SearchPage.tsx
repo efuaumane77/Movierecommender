@@ -6,20 +6,29 @@ import {
     MessageSquareText,
     Star,
     UserPlus,
+    UserCheck,
     Check,
     Clock,
     Plus,
     X,
     Flame,
 } from 'lucide-react'
-import { getTrending, searchMulti, posterUrl, type TMDBSearchResult } from '../lib/tmdb'
+import {
+    getTrending,
+    searchMulti,
+    searchPeople,
+    getPersonFilmography,
+    posterUrl,
+    type TMDBSearchResult,
+    type TMDBPersonSearchResult,
+} from '../lib/tmdb'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import type { MediaLog, Profile, TrailerComment } from '../types/database'
 import type { SelectedMedia } from '../components/media/MediaModal'
 import { TrailerPreviewModal } from '../components/media/TrailerPreviewModal'
 
-type SearchTab = 'all' | 'media' | 'users' | 'reviews'
+type SearchTab = 'all' | 'media' | 'people' | 'users' | 'reviews'
 
 interface ReviewSearchHit {
     id: string
@@ -60,8 +69,16 @@ export function SearchPage({
 
     // Live search results
     const [mediaResults, setMediaResults] = useState<TMDBSearchResult[]>([])
+    const [peopleResults, setPeopleResults] = useState<TMDBPersonSearchResult[]>([])
     const [userResults, setUserResults] = useState<Profile[]>([])
     const [reviewResults, setReviewResults] = useState<ReviewSearchHit[]>([])
+
+    // Followed actors & directors + inline filmography drawer
+    const [followedPersonIds, setFollowedPersonIds] = useState<Set<number>>(new Set())
+    const [togglingPersonId, setTogglingPersonId] = useState<number | null>(null)
+    const [inspectedPerson, setInspectedPerson] = useState<TMDBPersonSearchResult | null>(null)
+    const [personWorks, setPersonWorks] = useState<TMDBSearchResult[]>([])
+    const [loadingPersonWorks, setLoadingPersonWorks] = useState(false)
 
     // Default Explore / Trending state when search bar is empty
     const [trendingMedia, setTrendingMedia] = useState<TMDBSearchResult[]>([])
@@ -75,6 +92,21 @@ export function SearchPage({
     useEffect(() => {
         if (initialQuery) setQuery(initialQuery)
     }, [initialQuery])
+
+    // Load user's followed actors/directors
+    useEffect(() => {
+        if (!user) return
+        supabase
+            .from('followed_people')
+            .select('person_id')
+            .eq('user_id', user.id)
+            .then(({ data }) => {
+                const ids = new Set<number>(
+                    ((data as { person_id: number }[]) ?? []).map((r) => Number(r.person_id))
+                )
+                setFollowedPersonIds(ids)
+            })
+    }, [user])
 
     // Load Trending Media, Users, and Recent Reviews on mount
     useEffect(() => {
@@ -176,8 +208,11 @@ export function SearchPage({
         const trimmed = query.trim()
         if (!trimmed) {
             setMediaResults([])
+            setPeopleResults([])
             setUserResults([])
             setReviewResults([])
+            setInspectedPerson(null)
+            setPersonWorks([])
             setLoading(false)
             return
         }
@@ -190,11 +225,13 @@ export function SearchPage({
             try {
                 const [
                     tmdbHits,
+                    personHits,
                     { data: matchedUsers },
                     { data: matchedMediaLogs },
                     { data: matchedTrailerComments },
                 ] = await Promise.all([
                     searchMulti(trimmed),
+                    searchPeople(trimmed),
                     supabase
                         .from('profiles')
                         .select('*')
@@ -220,6 +257,7 @@ export function SearchPage({
 
                 const topMedia = tmdbHits.slice(0, 12)
                 setMediaResults(topMedia)
+                setPeopleResults(personHits)
                 setUserResults((matchedUsers as Profile[]) ?? [])
 
                 const titleByTmdb = new Map<string, { title: string; poster_path: string | null }>()
@@ -285,6 +323,64 @@ export function SearchPage({
         }
     }, [query, user?.id])
 
+    async function handleToggleFollowPerson(person: TMDBPersonSearchResult) {
+        if (!user || togglingPersonId === person.id) return
+        setTogglingPersonId(person.id)
+        const alreadyFollowing = followedPersonIds.has(person.id)
+
+        setFollowedPersonIds((prev) => {
+            const next = new Set(prev)
+            if (alreadyFollowing) next.delete(person.id)
+            else next.add(person.id)
+            return next
+        })
+
+        if (alreadyFollowing) {
+            const { error } = await supabase
+                .from('followed_people')
+                .delete()
+                .eq('user_id', user.id)
+                .eq('person_id', person.id)
+            if (error) setFollowedPersonIds((prev) => new Set(prev).add(person.id))
+        } else {
+            const { error } = await supabase.from('followed_people').insert({
+                user_id: user.id,
+                person_id: person.id,
+                name: person.name,
+                role: person.role,
+                profile_path: person.profile_path,
+            })
+            if (error) {
+                setFollowedPersonIds((prev) => {
+                    const next = new Set(prev)
+                    next.delete(person.id)
+                    return next
+                })
+            }
+        }
+
+        setTogglingPersonId(null)
+    }
+
+    async function handleOpenPersonFilmography(person: TMDBPersonSearchResult) {
+        if (inspectedPerson?.id === person.id) {
+            setInspectedPerson(null)
+            setPersonWorks([])
+            return
+        }
+        setInspectedPerson(person)
+        setLoadingPersonWorks(true)
+        setPersonWorks([])
+        try {
+            const works = await getPersonFilmography(person.id)
+            setPersonWorks(works)
+        } catch {
+            setPersonWorks([])
+        } finally {
+            setLoadingPersonWorks(false)
+        }
+    }
+
     const isSearching = query.trim().length > 0
     const displayedMedia = isSearching ? mediaResults : trendingMedia
     const displayedUsers = isSearching ? userResults : discoverUsers
@@ -294,14 +390,22 @@ export function SearchPage({
         {
             key: 'all',
             label: 'All',
-            count: displayedMedia.length + displayedUsers.length + displayedReviews.length,
+            count:
+                displayedMedia.length +
+                (isSearching ? peopleResults.length : 0) +
+                displayedUsers.length +
+                displayedReviews.length,
         },
         { key: 'media', label: 'Media', count: displayedMedia.length },
+        ...(isSearching
+            ? [{ key: 'people' as SearchTab, label: 'Cast & Crew', count: peopleResults.length }]
+            : []),
         { key: 'users', label: 'Users', count: displayedUsers.length },
         { key: 'reviews', label: 'Reviews', count: displayedReviews.length },
     ]
 
     const showMedia = activeTab === 'all' || activeTab === 'media'
+    const showPeople = isSearching && (activeTab === 'all' || activeTab === 'people')
     const showUsers = activeTab === 'all' || activeTab === 'users'
     const showReviews = activeTab === 'all' || activeTab === 'reviews'
 
@@ -309,10 +413,10 @@ export function SearchPage({
         <div className="space-y-5">
             <div>
                 <h1 className="text-lg font-bold flex items-center gap-2">
-                    <Search className="w-5 h-5 text-[#FF6B4A]" /> Explore & Search
+                    <Search className="w-5 h-5 text-[#FF6B4A]" /> Explore &amp; Search
                 </h1>
                 <p className="text-xs text-zinc-400 mt-0.5">
-                    Search movies, TV shows, @usernames, and friend reviews
+                    Search movies, TV shows, actors, directors, @usernames, and friend reviews
                 </p>
             </div>
 
@@ -324,7 +428,7 @@ export function SearchPage({
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search titles, @users, or review keywords..."
+                    placeholder="Search titles, actors, directors, @users, or reviews..."
                     className="w-full bg-[#18181F] border border-white/15 focus:border-[#FF6B4A] rounded-2xl pl-10 pr-10 py-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none transition"
                 />
                 {query && (
@@ -339,7 +443,7 @@ export function SearchPage({
             </div>
 
             {/* Filter Tabs */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
                 {tabs.map((tab) => {
                     const active = activeTab === tab.key
                     return (
@@ -359,19 +463,172 @@ export function SearchPage({
                                     active ? 'bg-black/25 text-white' : 'bg-white/10 text-zinc-400'
                                 }`}
                             >
-                {tab.count}
-              </span>
+                                {tab.count}
+                            </span>
                         </button>
                     )
                 })}
             </div>
 
             {isSearching && loading ? (
-                <p className="text-xs text-zinc-400 py-4">Searching media, users, and reviews...</p>
+                <p className="text-xs text-zinc-400 py-4">
+                    Searching media, cast &amp; crew, users, and reviews...
+                </p>
             ) : !isSearching && loadingExplore ? (
                 <p className="text-xs text-zinc-400 py-4">Loading trending movies, people, and reviews...</p>
             ) : (
                 <div className="space-y-6">
+                    {/* Actors & Directors Section (when searching) */}
+                    {showPeople && peopleResults.length > 0 && (
+                        <section className="space-y-2.5">
+                            <div className="flex items-center justify-between">
+                                <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                                    <Users className="w-3.5 h-3.5 text-[#FF6B4A]" /> Actors &amp; Directors ({peopleResults.length})
+                                </h2>
+                                <span className="text-[11px] text-zinc-500">
+                                    Tap a person to browse their filmography
+                                </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                {peopleResults.map((person) => {
+                                    const isFollowing = followedPersonIds.has(person.id)
+                                    const isInspected = inspectedPerson?.id === person.id
+
+                                    return (
+                                        <div
+                                            key={person.id}
+                                            onClick={() => handleOpenPersonFilmography(person)}
+                                            className={`border rounded-2xl p-3 flex items-center justify-between gap-2.5 transition cursor-pointer ${
+                                                isInspected
+                                                    ? 'bg-[#22222C] border-[#FF6B4A]'
+                                                    : 'bg-[#18181F] hover:bg-[#1E1E27] border-white/10'
+                                            }`}
+                                        >
+                                            <div className="flex items-center gap-2.5 min-w-0">
+                                                {person.profile_path ? (
+                                                    <img
+                                                        src={posterUrl(person.profile_path, 'w185')}
+                                                        alt={person.name}
+                                                        className="w-10 h-10 rounded-full object-cover shrink-0 border border-white/10"
+                                                    />
+                                                ) : (
+                                                    <div className="w-10 h-10 rounded-full bg-[#22222C] flex items-center justify-center text-xs font-bold text-[#FF9F43] shrink-0">
+                                                        {person.name[0]}
+                                                    </div>
+                                                )}
+
+                                                <div className="min-w-0">
+                                                    <p className="text-xs font-bold text-white truncate">
+                                                        {person.name}
+                                                    </p>
+                                                    <p className="text-[11px] text-zinc-400 truncate">
+                                                        {person.role}
+                                                        {person.known_for_titles.length > 0
+                                                            ? ` • ${person.known_for_titles.join(', ')}`
+                                                            : ''}
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            {user && (
+                                                <button
+                                                    type="button"
+                                                    disabled={togglingPersonId === person.id}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        void handleToggleFollowPerson(person)
+                                                    }}
+                                                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer shrink-0 ${
+                                                        isFollowing
+                                                            ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                                            : 'bg-[#FF6B4A] hover:bg-[#FF9F43] text-white'
+                                                    }`}
+                                                >
+                                                    {isFollowing ? (
+                                                        <>
+                                                            <UserCheck className="w-3 h-3" /> Following
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <UserPlus className="w-3 h-3" /> Follow
+                                                        </>
+                                                    )}
+                                                </button>
+                                            )}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+
+                            {inspectedPerson && (
+                                <div className="bg-[#18181F] border border-white/15 rounded-2xl p-4 space-y-2.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div>
+                                            <p className="text-xs font-bold text-white">
+                                                {inspectedPerson.name} ({inspectedPerson.role})
+                                            </p>
+                                            <p className="text-[11px] text-zinc-400">
+                                                Tap any title to log or watch trailer
+                                            </p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setInspectedPerson(null)
+                                                setPersonWorks([])
+                                            }}
+                                            className="p-1 text-zinc-400 hover:text-white cursor-pointer"
+                                        >
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                    </div>
+
+                                    {loadingPersonWorks ? (
+                                        <p className="text-xs text-zinc-400 py-2">Loading filmography...</p>
+                                    ) : personWorks.length === 0 ? (
+                                        <p className="text-xs text-zinc-500">No titles found.</p>
+                                    ) : (
+                                        <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1">
+                                            {personWorks.map((work) => {
+                                                const workTitle = work.title || work.name || 'Untitled'
+                                                return (
+                                                    <button
+                                                        key={`${work.media_type}-${work.id}`}
+                                                        type="button"
+                                                        onClick={() =>
+                                                            onOpenMedia({
+                                                                tmdb_id: work.id,
+                                                                media_type: work.media_type,
+                                                                title: workTitle,
+                                                                poster_path: work.poster_path,
+                                                                overview: work.overview,
+                                                            })
+                                                        }
+                                                        className="w-24 shrink-0 text-left group cursor-pointer"
+                                                    >
+                                                        {work.poster_path ? (
+                                                            <img
+                                                                src={posterUrl(work.poster_path, 'w185')}
+                                                                alt={workTitle}
+                                                                className="w-full aspect-[2/3] rounded-xl object-cover border border-white/10 group-hover:border-[#FF6B4A] transition"
+                                                            />
+                                                        ) : (
+                                                            <div className="w-full aspect-[2/3] rounded-xl bg-[#22222C]" />
+                                                        )}
+                                                        <p className="text-[11px] font-semibold text-zinc-200 group-hover:text-[#FF9F43] truncate mt-1">
+                                                            {workTitle}
+                                                        </p>
+                                                    </button>
+                                                )
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </section>
+                    )}
+
                     {/* Trending / Matched Media Section */}
                     {showMedia && (
                         <section className="space-y-2.5">
@@ -379,11 +636,11 @@ export function SearchPage({
                                 <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
                                     {isSearching ? (
                                         <>
-                                            <Film className="w-3.5 h-3.5 text-[#FF6B4A]" /> Movies & TV ({displayedMedia.length})
+                                            <Film className="w-3.5 h-3.5 text-[#FF6B4A]" /> Movies &amp; TV ({displayedMedia.length})
                                         </>
                                     ) : (
                                         <>
-                                            <Flame className="w-3.5 h-3.5 text-[#FF6B4A]" /> Trending Movies & TV
+                                            <Flame className="w-3.5 h-3.5 text-[#FF6B4A]" /> Trending Movies &amp; TV
                                         </>
                                     )}
                                 </h2>
@@ -394,7 +651,7 @@ export function SearchPage({
 
                             {displayedMedia.length === 0 ? (
                                 <p className="text-xs text-zinc-500 bg-[#18181F] border border-white/5 rounded-xl p-3">
-                                    No movies or TV shows found matching "{query}".
+                                    No movies or TV shows found matching &ldquo;{query}&rdquo;.
                                 </p>
                             ) : (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -492,12 +749,12 @@ export function SearchPage({
 
                                                 {isFollowing ? (
                                                     <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 text-[11px] font-semibold flex items-center gap-1 shrink-0">
-                            <Check className="w-3 h-3" /> Following
-                          </span>
+                                                        <Check className="w-3 h-3" /> Following
+                                                    </span>
                                                 ) : isRequested ? (
                                                     <span className="px-2.5 py-1 rounded-lg bg-[#22222C] text-zinc-400 text-[11px] font-semibold flex items-center gap-1 shrink-0">
-                            <Clock className="w-3 h-3" /> Requested
-                          </span>
+                                                        <Clock className="w-3 h-3" /> Requested
+                                                    </span>
                                                 ) : (
                                                     <button
                                                         type="button"
@@ -559,18 +816,18 @@ export function SearchPage({
                                             <div className="min-w-0 flex-1 space-y-1">
                                                 <div className="flex items-center justify-between gap-2">
                                                     <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-xs font-bold text-white truncate">
-                              @{rev.username}
-                            </span>
+                                                        <span className="text-xs font-bold text-white truncate">
+                                                            @{rev.username}
+                                                        </span>
                                                         <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-zinc-400 shrink-0">
-                              {rev.source === 'trailer' ? 'Trailer Review' : 'Media Review'}
-                            </span>
+                                                            {rev.source === 'trailer' ? 'Trailer Review' : 'Media Review'}
+                                                        </span>
                                                     </div>
 
                                                     {rev.rating !== null && (
                                                         <span className="text-xs font-bold text-[#FF9F43] flex items-center gap-0.5 shrink-0">
-                              <Star className="w-3.5 h-3.5 fill-[#FF9F43]" /> {rev.rating}/5
-                            </span>
+                                                            <Star className="w-3.5 h-3.5 fill-[#FF9F43]" /> {rev.rating}/5
+                                                        </span>
                                                     )}
                                                 </div>
 

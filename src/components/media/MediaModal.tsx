@@ -69,6 +69,7 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
 
     // Cast, Crew, Followed People & Similar Titles
     const [credits, setCredits] = useState<TMDBPersonCredit[]>([])
+    const [showFullCast, setShowFullCast] = useState(false)
     const [followedPersonIds, setFollowedPersonIds] = useState<Set<number>>(new Set())
     const [selectedPerson, setSelectedPerson] = useState<TMDBPersonCredit | null>(null)
     const [personCredits, setPersonCredits] = useState<TMDBSearchResult[]>([])
@@ -104,6 +105,7 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         setRemovingLog(false)
 
         setCredits([])
+        setShowFullCast(false)
         setSelectedPerson(null)
         setPersonCredits([])
         setSimilarItems([])
@@ -191,7 +193,6 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         setTogglingPersonId(person.id)
         const alreadyFollowing = followedPersonIds.has(person.id)
 
-        // Optimistic update
         setFollowedPersonIds((prev) => {
             const next = new Set(prev)
             if (alreadyFollowing) next.delete(person.id)
@@ -552,59 +553,117 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                     </div>
                 )}
 
-                {/* Director & Cast Strip + Inline Filmography Drawer */}
+                {/* Director & Cast Strip + Full Cast Dropdown + Inline Filmography Drawer */}
                 {credits.length > 0 && (
                     <div className="px-5 py-3 bg-[#14141A] border-b border-white/10 space-y-2.5">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                             <span className="text-[11px] font-semibold text-zinc-400 flex items-center gap-1.5">
                                 <Users className="w-3.5 h-3.5 text-[#FF6B4A]" /> Director &amp; Cast
                             </span>
-                            <span className="text-[10px] text-zinc-500">
-                                Tap to follow or see films
-                            </span>
-                        </div>
 
-                        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
-                            {credits.map((person) => {
-                                const isFollowing = followedPersonIds.has(person.id)
-                                const isSelected = selectedPerson?.id === person.id
-
-                                return (
-                                    <button
-                                        key={`${person.role}-${person.id}`}
-                                        type="button"
-                                        onClick={() => handleInspectPerson(person)}
-                                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border text-left shrink-0 transition cursor-pointer ${
-                                            isSelected
-                                                ? 'bg-[#FF6B4A]/20 border-[#FF6B4A] text-white'
-                                                : 'bg-[#22222C] hover:bg-[#2C2C38] border-white/10 text-zinc-200'
+                            {credits.length > 6 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowFullCast((prev) => !prev)}
+                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#FF9F43] hover:text-[#FF6B4A] transition cursor-pointer"
+                                >
+                                    {showFullCast ? 'Show Less' : `Full Cast (${credits.length})`}
+                                    <ChevronDown
+                                        className={`w-3.5 h-3.5 transition-transform ${
+                                            showFullCast ? 'rotate-180' : ''
                                         }`}
-                                    >
-                                        {person.profile_path ? (
-                                            <img
-                                                src={posterUrl(person.profile_path, 'w185')}
-                                                alt={person.name}
-                                                className="w-6 h-6 rounded-full object-cover shrink-0"
-                                            />
-                                        ) : (
-                                            <div className="w-6 h-6 rounded-full bg-[#18181F] flex items-center justify-center text-[10px] font-bold text-zinc-400 shrink-0">
-                                                {person.name[0]}
-                                            </div>
-                                        )}
-
-                                        <div className="min-w-0">
-                                            <p className="text-[11px] font-semibold leading-tight truncate max-w-[110px]">
-                                                {person.name}
-                                            </p>
-                                            <p className="text-[9px] text-zinc-400 leading-tight">
-                                                {person.role}
-                                                {isFollowing ? ' • Following' : ''}
-                                            </p>
-                                        </div>
-                                    </button>
-                                )
-                            })}
+                                    />
+                                </button>
+                            )}
                         </div>
+
+                        {showFullCast ? (
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto no-scrollbar pr-0.5">
+                                {credits.map((person) => {
+                                    const isFollowing = followedPersonIds.has(person.id)
+                                    const isSelected = selectedPerson?.id === person.id
+
+                                    return (
+                                        <button
+                                            key={`${person.role}-${person.id}`}
+                                            type="button"
+                                            onClick={() => handleInspectPerson(person)}
+                                            className={`flex items-center gap-2 p-2 rounded-xl border text-left transition cursor-pointer ${
+                                                isSelected
+                                                    ? 'bg-[#FF6B4A]/20 border-[#FF6B4A] text-white'
+                                                    : 'bg-[#22222C] hover:bg-[#2C2C38] border-white/10 text-zinc-200'
+                                            }`}
+                                        >
+                                            {person.profile_path ? (
+                                                <img
+                                                    src={posterUrl(person.profile_path, 'w185')}
+                                                    alt={person.name}
+                                                    className="w-7 h-7 rounded-full object-cover shrink-0"
+                                                />
+                                            ) : (
+                                                <div className="w-7 h-7 rounded-full bg-[#18181F] flex items-center justify-center text-[10px] font-bold text-zinc-400 shrink-0">
+                                                    {person.name[0]}
+                                                </div>
+                                            )}
+
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-[11px] font-semibold leading-tight truncate">
+                                                    {person.name}
+                                                </p>
+                                                <p className="text-[9px] text-zinc-400 leading-tight truncate">
+                                                    {person.role === 'Director'
+                                                        ? 'Director'
+                                                        : person.character || 'Actor'}
+                                                    {isFollowing ? ' • Following' : ''}
+                                                </p>
+                                            </div>
+                                        </button>
+                                    )
+                                })}
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+                                {credits.slice(0, 6).map((person) => {
+                                    const isFollowing = followedPersonIds.has(person.id)
+                                    const isSelected = selectedPerson?.id === person.id
+
+                                    return (
+                                        <button
+                                            key={`${person.role}-${person.id}`}
+                                            type="button"
+                                            onClick={() => handleInspectPerson(person)}
+                                            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border text-left shrink-0 transition cursor-pointer ${
+                                                isSelected
+                                                    ? 'bg-[#FF6B4A]/20 border-[#FF6B4A] text-white'
+                                                    : 'bg-[#22222C] hover:bg-[#2C2C38] border-white/10 text-zinc-200'
+                                            }`}
+                                        >
+                                            {person.profile_path ? (
+                                                <img
+                                                    src={posterUrl(person.profile_path, 'w185')}
+                                                    alt={person.name}
+                                                    className="w-6 h-6 rounded-full object-cover shrink-0"
+                                                />
+                                            ) : (
+                                                <div className="w-6 h-6 rounded-full bg-[#18181F] flex items-center justify-center text-[10px] font-bold text-zinc-400 shrink-0">
+                                                    {person.name[0]}
+                                                </div>
+                                            )}
+
+                                            <div className="min-w-0">
+                                                <p className="text-[11px] font-semibold leading-tight truncate max-w-[110px]">
+                                                    {person.name}
+                                                </p>
+                                                <p className="text-[9px] text-zinc-400 leading-tight">
+                                                    {person.role}
+                                                    {isFollowing ? ' • Following' : ''}
+                                                </p>
+                                            </div>
+                                        </button>
+                                    )
+                                })}
+                            </div>
+                        )}
 
                         {/* Expanded Filmography Drawer for Selected Actor/Director */}
                         {selectedPerson && (
@@ -615,7 +674,12 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                                             {selectedPerson.name}
                                         </p>
                                         <p className="text-[10px] text-zinc-400">
-                                            {selectedPerson.role} • Known for
+                                            {selectedPerson.role === 'Director'
+                                                ? 'Director'
+                                                : selectedPerson.character
+                                                    ? `as ${selectedPerson.character}`
+                                                    : 'Actor'}{' '}
+                                            • Known for
                                         </p>
                                     </div>
 

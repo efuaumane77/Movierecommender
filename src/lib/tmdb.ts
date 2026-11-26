@@ -31,6 +31,14 @@ export interface TMDBSearchResult {
     vote_average: number
 }
 
+export interface TMDBPersonSearchResult {
+    id: number
+    name: string
+    role: 'Director' | 'Actor'
+    profile_path: string | null
+    known_for_titles: string[]
+}
+
 export interface WatchProviderItem {
     provider_id: number
     provider_name: string
@@ -50,6 +58,33 @@ export async function searchMulti(query: string): Promise<TMDBSearchResult[]> {
         `/search/multi?query=${encodeURIComponent(query)}&include_adult=false`
     )
     return data.results.filter((r) => r.media_type === 'movie' || r.media_type === 'tv')
+}
+
+export async function searchPeople(query: string): Promise<TMDBPersonSearchResult[]> {
+    if (!query.trim()) return []
+    const data = await tmdbFetch<{
+        results?: Array<{
+            id: number
+            name: string
+            known_for_department?: string
+            profile_path: string | null
+            known_for?: Array<{ title?: string; name?: string }>
+        }>
+    }>(`/search/person?query=${encodeURIComponent(query)}&include_adult=false`)
+
+    return (data.results ?? [])
+        .filter((p) => p.known_for_department === 'Acting' || p.known_for_department === 'Directing')
+        .slice(0, 8)
+        .map((p) => ({
+            id: p.id,
+            name: p.name,
+            role: p.known_for_department === 'Directing' ? 'Director' : 'Actor',
+            profile_path: p.profile_path,
+            known_for_titles: (p.known_for ?? [])
+                .map((k) => k.title || k.name || '')
+                .filter(Boolean)
+                .slice(0, 3),
+        }))
 }
 
 export async function getTrending(page = 1): Promise<TMDBSearchResult[]> {
@@ -116,7 +151,7 @@ export async function getMediaCredits(
 
     const directors: TMDBPersonCredit[] = (data.crew ?? [])
         .filter((c) => c.job === 'Director')
-        .slice(0, 2)
+        .slice(0, 4)
         .map((d) => ({
             id: d.id,
             name: d.name,
@@ -124,8 +159,8 @@ export async function getMediaCredits(
             profile_path: d.profile_path,
         }))
 
-    const topCast: TMDBPersonCredit[] = (data.cast ?? [])
-        .slice(0, 6)
+    const fullCast: TMDBPersonCredit[] = (data.cast ?? [])
+        .slice(0, 40)
         .map((a) => ({
             id: a.id,
             name: a.name,
@@ -135,7 +170,7 @@ export async function getMediaCredits(
         }))
 
     const seen = new Set<number>()
-    return [...directors, ...topCast].filter((p) => {
+    return [...directors, ...fullCast].filter((p) => {
         if (seen.has(p.id)) return false
         seen.add(p.id)
         return true

@@ -27,7 +27,7 @@ export interface RecommendedItem {
     genre_ids: number[]
     popularity: number
     score: number
-    reason: string
+    reason?: string
 }
 
 async function tmdbFetchJson<T>(endpoint: string): Promise<T> {
@@ -62,7 +62,6 @@ export async function getPersonalizedRecommendations(params: {
 }): Promise<RecommendedItem[]> {
     const { userId, profile, myLogs, feedLogs, friendIds } = params
 
-    // 1. Fetch implicit signals from Supabase (liked trailers + trailer reviews)
     const [{ data: likedTrailers }, { data: trailerComments }] = await Promise.all([
         supabase
             .from('trailer_likes')
@@ -77,12 +76,10 @@ export async function getPersonalizedRecommendations(params: {
             .limit(25),
     ])
 
-    // 2. Build exclusion set (already watched, watching, or watchlisted) & seed weights
     const seenKeys = new Set<string>(myLogs.map((l) => `${l.media_type}-${l.tmdb_id}`))
     const seedMap = new Map<string, SeedEntry>()
     const genreWeights = new Map<number, number>()
 
-    // Seed genre affinities from explicit profile interest pills
     for (const interest of profile?.interests ?? []) {
         const mappedIds = INTEREST_TO_GENRE_IDS[interest] ?? []
         for (const gid of mappedIds) {
@@ -90,7 +87,6 @@ export async function getPersonalizedRecommendations(params: {
         }
     }
 
-    // Weight watched logs, ratings, watching status, and watchlist items
     for (const log of myLogs) {
         const key = `${log.media_type}-${log.tmdb_id}`
         let weight = 1
@@ -110,7 +106,6 @@ export async function getPersonalizedRecommendations(params: {
         })
     }
 
-    // Weight liked trailers (+3)
     for (const like of likedTrailers ?? []) {
         const mediaType = like.media_type === 'tv' ? 'tv' : 'movie'
         const key = `${mediaType}-${like.tmdb_id}`
@@ -123,7 +118,6 @@ export async function getPersonalizedRecommendations(params: {
         })
     }
 
-    // Weight trailer reviews (+2 positive, -3 negative)
     for (const comment of trailerComments ?? []) {
         const mediaType = comment.media_type === 'tv' ? 'tv' : 'movie'
         const key = `${mediaType}-${comment.tmdb_id}`
@@ -137,13 +131,11 @@ export async function getPersonalizedRecommendations(params: {
         })
     }
 
-    // Pick top 4 positive seeds to pull similar titles from TMDB
     const topPositiveSeeds = Array.from(seedMap.values())
         .filter((s) => s.weight > 0)
         .sort((a, b) => b.weight - a.weight)
         .slice(0, 4)
 
-    // 3. Candidate Generation: TMDB recommendations + genre discovery + trending exploration
     const candidateMap = new Map<string, RecommendedItem>()
 
     const tasks: Promise<void>[] = topPositiveSeeds.map(async (seed) => {
@@ -164,9 +156,6 @@ export async function getPersonalizedRecommendations(params: {
 
                 const existing = candidateMap.get(key)
                 const scoreBoost = seed.weight * 2.2
-                const reasonLabel = seed.title
-                    ? `Because you liked ${seed.title}`
-                    : 'Based on your trailer likes'
 
                 candidateMap.set(key, {
                     id,
@@ -178,15 +167,13 @@ export async function getPersonalizedRecommendations(params: {
                     genre_ids: gids,
                     popularity: Number(raw.popularity || 0),
                     score: (existing?.score ?? 0) + scoreBoost,
-                    reason: existing ? existing.reason : reasonLabel,
                 })
             }
         } catch {
-            // Skip individual seed failure if TMDB has no recommendations for that ID
+            // ignore missing recommendation lists
         }
     })
 
-    // Cold-start / genre-affinity discovery if user has profile interests
     const topGenreIds = Array.from(genreWeights.entries())
         .filter(([, w]) => w > 0)
         .sort((a, b) => b[1] - a[1])
@@ -214,7 +201,6 @@ export async function getPersonalizedRecommendations(params: {
                             genre_ids: Array.isArray(raw.genre_ids) ? (raw.genre_ids as number[]) : [],
                             popularity: Number(raw.popularity || 0),
                             score: 3.5,
-                            reason: 'Matches your interests',
                         })
                     }
                 })
@@ -222,7 +208,6 @@ export async function getPersonalizedRecommendations(params: {
         )
     }
 
-    // Exploration bucket from weekly trending
     tasks.push(
         tmdbFetchJson<{ results?: Array<Record<string, unknown>> }>('/trending/all/week?page=1')
             .then((data) => {
@@ -244,7 +229,6 @@ export async function getPersonalizedRecommendations(params: {
                         genre_ids: Array.isArray(raw.genre_ids) ? (raw.genre_ids as number[]) : [],
                         popularity: Number(raw.popularity || 0),
                         score: 1.5,
-                        reason: 'Popular on Cinerate',
                     })
                 }
             })
@@ -253,7 +237,6 @@ export async function getPersonalizedRecommendations(params: {
 
     await Promise.all(tasks)
 
-    // 4. Heavy Ranking: apply genre affinity + social proof from friends' high ratings
     const friendPicks = new Map<string, string>()
     for (const log of feedLogs) {
         if (friendIds.has(log.user_id) && (log.rating ?? 0) >= 4 && log.profiles?.username) {
@@ -275,18 +258,7 @@ export async function getPersonalizedRecommendations(params: {
         }
     }
 
-    // 5. Re-ranking & Diversity: sort by score and avoid showing >3 items from the exact same reason in a row
-    const sorted = Array.from(candidateMap.values()).sort((a, b) => b.score - a.score)
-    const diversified: RecommendedItem[] = []
-    const reasonCounts = new Map<string, number>()
-
-    for (const item of sorted) {
-        const count = reasonCounts.get(item.reason) ?? 0
-        if (count >= 4) continue
-        reasonCounts.set(item.reason, count + 1)
-        diversified.push(item)
-        if (diversified.length >= 16) break
-    }
-
-    return diversified
+    return Array.from(candidateMap.values())
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 16)
 }

@@ -554,13 +554,6 @@ function ReelCard({
                 ref={stageRef}
                 className="relative h-full flex-1 min-w-0 bg-[#14141A] border border-white/15 rounded-2xl overflow-hidden shadow-2xl flex flex-col justify-between"
             >
-                {item.reason && (
-                    <div className="absolute top-3 left-3 z-20 px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md border border-white/15 text-[11px] font-semibold text-[#FF9F43] flex items-center gap-1.5 pointer-events-none">
-                        <Wand2 className="w-3 h-3 text-[#FF6B4A]" />
-                        <span>{item.reason}</span>
-                    </div>
-                )}
-
                 <div className="relative flex-1 min-h-0 w-full bg-black flex items-center justify-center overflow-hidden">
                     {isActive && trailerKey ? (
                         <div
@@ -684,6 +677,11 @@ function ReelCard({
                                         {item.media_type === 'tv' ? 'TV Series' : 'Movie'}
                                         {year ? ` • ${year}` : ''}
                                     </span>
+                                    {item.reason && (
+                                        <span className="px-2 py-0.5 rounded-md bg-[#FF6B4A]/15 border border-[#FF6B4A]/30 text-[11px] font-semibold text-[#FF9F43] shrink-0">
+                                            {item.reason}
+                                        </span>
+                                    )}
                                     {avgStars && (
                                         <span className="px-2 py-0.5 rounded-lg bg-[#22222C] text-[11px] font-semibold text-[#FF9F43] shrink-0">
                                             ★ {avgStars} ({ratedComments.length})

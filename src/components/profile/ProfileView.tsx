@@ -470,6 +470,7 @@ export function ProfileView({
     const interests = profileData.interests ?? []
     const isFollowingTarget = friendIds.has(targetUserId)
     const isRequestedTarget = outgoingRequestIds.has(targetUserId)
+    const followingCount = isOwnProfile ? friendIds.size : followingList.length
 
     const modalUsers =
         socialModal === 'followers'
@@ -527,9 +528,9 @@ export function ProfileView({
 
                             {isOwnProfile && (
                                 <span className="absolute inset-0 rounded-full bg-black/55 opacity-0 group-hover:opacity-100 transition flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold text-white">
-                  <Camera className="w-4 h-4 text-[#FF9F43]" />
-                  <span>{uploadingAvatar ? 'Saving...' : 'Photo'}</span>
-                </span>
+                                    <Camera className="w-4 h-4 text-[#FF9F43]" />
+                                    <span>{uploadingAvatar ? 'Saving...' : 'Photo'}</span>
+                                </span>
                             )}
                         </button>
 
@@ -597,8 +598,8 @@ export function ProfileView({
                                 </h1>
                                 {profileData.pronouns && (
                                     <span className="text-xs font-medium text-zinc-400 bg-white/5 px-2.5 py-0.5 rounded-full">
-                    {profileData.pronouns}
-                  </span>
+                                        {profileData.pronouns}
+                                    </span>
                                 )}
                             </div>
 
@@ -621,12 +622,12 @@ export function ProfileView({
                                 </button>
                             ) : isFollowingTarget ? (
                                 <span className="px-3.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-semibold flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5" /> Following
-                </span>
+                                    <Check className="w-3.5 h-3.5" /> Following
+                                </span>
                             ) : isRequestedTarget ? (
                                 <span className="px-3.5 py-1.5 rounded-xl bg-[#22222C] text-zinc-400 text-xs font-semibold flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5" /> Requested
-                </span>
+                                    <Clock className="w-3.5 h-3.5" /> Requested
+                                </span>
                             ) : (
                                 <button
                                     type="button"
@@ -641,10 +642,10 @@ export function ProfileView({
                         <p className="text-sm font-semibold text-zinc-100">{visibleDisplayName}</p>
 
                         <div className="flex items-center gap-5 flex-wrap text-xs">
-              <span>
-                <strong className="text-white font-bold">{watchedLogs.length}</strong>{' '}
-                  <span className="text-zinc-400">watched</span>
-              </span>
+                            <span>
+                                <strong className="text-white font-bold">{watchedLogs.length}</strong>{' '}
+                                <span className="text-zinc-400">watched</span>
+                            </span>
 
                             <button
                                 type="button"
@@ -660,7 +661,7 @@ export function ProfileView({
                                 onClick={() => setSocialModal('following')}
                                 className="hover:underline cursor-pointer"
                             >
-                                <strong className="text-white font-bold">{followingList.length}</strong>{' '}
+                                <strong className="text-white font-bold">{followingCount}</strong>{' '}
                                 <span className="text-zinc-400">following</span>
                             </button>
 
@@ -689,8 +690,8 @@ export function ProfileView({
                                         key={tag}
                                         className="px-2.5 py-0.5 rounded-full bg-[#22222C] border border-white/10 text-[11px] font-semibold text-[#FF9F43]"
                                     >
-                    #{tag}
-                  </span>
+                                        #{tag}
+                                    </span>
                                 ))}
                             </div>
                         )}
@@ -712,8 +713,8 @@ export function ProfileView({
                     <span>Watched Library</span>
                     {visibility === 'followers' && (
                         <span title="Followers only" className="inline-flex">
-              <Lock className="w-3 h-3 text-[#FF9F43]" />
-            </span>
+                            <Lock className="w-3 h-3 text-[#FF9F43]" />
+                        </span>
                     )}
                 </button>
 
@@ -952,8 +953,8 @@ export function ProfileView({
                                         <p className="text-sm font-bold text-white truncate">{rev.title}</p>
                                         {rev.rating !== null && (
                                             <span className="text-xs font-bold text-[#FF9F43] flex items-center gap-0.5 shrink-0">
-                        <Star className="w-3.5 h-3.5 fill-[#FF9F43]" /> {rev.rating}/5
-                      </span>
+                                                <Star className="w-3.5 h-3.5 fill-[#FF9F43]" /> {rev.rating}/5
+                                            </span>
                                         )}
                                     </div>
                                     <p className="text-xs text-zinc-300 leading-relaxed">{rev.review_text}</p>
@@ -1050,8 +1051,8 @@ export function ProfileView({
                                     className="flex-1 accent-[#FF6B4A] cursor-pointer"
                                 />
                                 <span className="text-[11px] font-mono text-zinc-400 w-10 text-right">
-                  {cropZoom.toFixed(1)}x
-                </span>
+                                    {cropZoom.toFixed(1)}x
+                                </span>
                             </div>
                         </div>
 
@@ -1212,12 +1213,12 @@ export function ProfileView({
                                             {!isMe &&
                                                 (followingPerson ? (
                                                     <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 text-[11px] font-semibold flex items-center gap-1 shrink-0">
-                            <Check className="w-3 h-3" /> Following
-                          </span>
+                                                        <Check className="w-3 h-3" /> Following
+                                                    </span>
                                                 ) : requestedPerson ? (
                                                     <span className="px-2.5 py-1 rounded-lg bg-[#22222C] text-zinc-400 text-[11px] font-semibold flex items-center gap-1 shrink-0">
-                            <Clock className="w-3 h-3" /> Requested
-                          </span>
+                                                        <Clock className="w-3 h-3" /> Requested
+                                                    </span>
                                                 ) : (
                                                     <button
                                                         type="button"

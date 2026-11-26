@@ -15,7 +15,7 @@ import { AppShell } from './components/layout/AppShell'
 import { MediaModal, type SelectedMedia } from './components/media/MediaModal'
 import { supabase } from './lib/supabase'
 import { readJoinedForumSlugs, writeJoinedForumSlugs } from './lib/forums'
-import type { MediaLog, Profile } from './types/database'
+import type { AcceptedFollowNotification, MediaLog, Profile } from './types/database'
 
 function CinerateWorkspace() {
     const { user, loading } = useAuth()
@@ -28,6 +28,7 @@ function CinerateWorkspace() {
     const [suggestedUsers, setSuggestedUsers] = useState<Profile[]>([])
     const [outgoingRequestIds, setOutgoingRequestIds] = useState<Set<string>>(new Set())
     const [incomingRequests, setIncomingRequests] = useState<IncomingRequest[]>([])
+    const [acceptedNotifications, setAcceptedNotifications] = useState<AcceptedFollowNotification[]>([])
     const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null)
     const [joinedForumSlugs, setJoinedForumSlugs] = useState<string[]>(() =>
         readJoinedForumSlugs()
@@ -73,6 +74,7 @@ function CinerateWorkspace() {
         if (ownLogs) setMyLogs(ownLogs as MediaLog[])
 
         const acceptedFriends: Profile[] = []
+        const acceptedList: AcceptedFollowNotification[] = []
         const outgoing = new Set<string>()
         const incoming: IncomingRequest[] = []
         const connectedIds = new Set<string>()
@@ -83,12 +85,18 @@ function CinerateWorkspace() {
                 const otherId = isRequester
                     ? (row.addressee_id as string)
                     : (row.requester_id as string)
+                const otherProfile = isRequester
+                    ? (row.addressee as Profile)
+                    : (row.requester as Profile)
                 connectedIds.add(otherId)
 
                 if (row.status === 'accepted') {
-                    acceptedFriends.push(
-                        isRequester ? (row.addressee as Profile) : (row.requester as Profile)
-                    )
+                    acceptedFriends.push(otherProfile)
+                    acceptedList.push({
+                        id: row.id as string,
+                        otherUser: otherProfile,
+                        direction: isRequester ? 'they_accepted_you' : 'you_accepted_them',
+                    })
                 } else if (row.status === 'pending') {
                     if (isRequester) {
                         outgoing.add(otherId)
@@ -103,6 +111,7 @@ function CinerateWorkspace() {
         }
 
         setFriends(acceptedFriends)
+        setAcceptedNotifications(acceptedList)
         setOutgoingRequestIds(outgoing)
         setIncomingRequests(incoming)
 
@@ -280,7 +289,11 @@ function CinerateWorkspace() {
                         element={
                             <NotificationsPage
                                 incomingRequests={incomingRequests}
+                                acceptedNotifications={acceptedNotifications}
                                 friendLogs={friendLogs}
+                                friendIds={friendIds}
+                                outgoingRequestIds={outgoingRequestIds}
+                                onFollowUser={handleFollowUser}
                                 onAcceptRequest={handleAcceptRequest}
                             />
                         }

@@ -31,18 +31,14 @@ export interface RecommendedItem {
 }
 
 async function tmdbFetchJson<T>(endpoint: string): Promise<T> {
-    if (!TOKEN) {
-        throw new Error('Missing VITE_TMDB_API_KEY in your .env file')
-    }
+    if (!TOKEN) throw new Error('Missing VITE_TMDB_API_KEY in your .env file')
     const res = await fetch(`${TMDB_BASE}${endpoint}`, {
         headers: {
             Authorization: `Bearer ${TOKEN}`,
             'Content-Type': 'application/json',
         },
     })
-    if (!res.ok) {
-        throw new Error(`TMDB request failed (${res.status})`)
-    }
+    if (!res.ok) throw new Error(`TMDB request failed (${res.status})`)
     return res.json() as Promise<T>
 }
 
@@ -62,19 +58,26 @@ export async function getPersonalizedRecommendations(params: {
 }): Promise<RecommendedItem[]> {
     const { userId, profile, myLogs, feedLogs, friendIds } = params
 
-    const [{ data: likedTrailers }, { data: trailerComments }] = await Promise.all([
-        supabase
-            .from('trailer_likes')
-            .select('tmdb_id, media_type, created_at')
-            .eq('user_id', userId)
-            .order('created_at', { ascending: false })
-            .limit(25),
-        supabase
-            .from('trailer_comments')
-            .select('tmdb_id, media_type, rating')
-            .eq('user_id', userId)
-            .limit(25),
-    ])
+    const [{ data: likedTrailers }, { data: trailerComments }, { data: trailerViews }] =
+        await Promise.all([
+            supabase
+                .from('trailer_likes')
+                .select('tmdb_id, media_type, created_at')
+                .eq('user_id', userId)
+                .order('created_at', { ascending: false })
+                .limit(25),
+            supabase
+                .from('trailer_comments')
+                .select('tmdb_id, media_type, rating')
+                .eq('user_id', userId)
+                .limit(25),
+            supabase
+                .from('trailer_views')
+                .select('tmdb_id, media_type, watch_seconds, duration_seconds, completion_rate')
+                .eq('user_id', userId)
+                .order('updated_at', { ascending: false })
+                .limit(40),
+        ])
 
     const seenKeys = new Set<string>(myLogs.map((l) => `${l.media_type}-${l.tmdb_id}`))
     const seedMap = new Map<string, SeedEntry>()
@@ -97,7 +100,6 @@ export async function getPersonalizedRecommendations(params: {
         } else if (log.status === 'watching' || log.status === 'watchlist') {
             weight = 2.5
         }
-
         seedMap.set(key, {
             id: log.tmdb_id,
             media_type: log.media_type,
@@ -131,6 +133,29 @@ export async function getPersonalizedRecommendations(params: {
         })
     }
 
+    // Dwell-time signal: >60% watch completion (+3), <3s quick skip (-2)
+    for (const view of trailerViews ?? []) {
+        const mediaType = view.media_type === 'tv' ? 'tv' : 'movie'
+        const key = `${mediaType}-${view.tmdb_id}`
+        const completion = Number(view.completion_rate || 0)
+        const watchedSec = Number(view.watch_seconds || 0)
+        const durSec = Number(view.duration_seconds || 0)
+
+        let dwellDelta = 0
+        if (completion >= 0.6) dwellDelta = 3
+        else if (durSec >= 15 && watchedSec > 0 && watchedSec < 3) dwellDelta = -2
+
+        if (dwellDelta !== 0) {
+            const existing = seedMap.get(key)
+            seedMap.set(key, {
+                id: Number(view.tmdb_id),
+                media_type: mediaType,
+                weight: (existing?.weight ?? 0) + dwellDelta,
+                title: existing?.title,
+            })
+        }
+    }
+
     const topPositiveSeeds = Array.from(seedMap.values())
         .filter((s) => s.weight > 0)
         .sort((a, b) => b.weight - a.weight)
@@ -155,8 +180,6 @@ export async function getPersonalizedRecommendations(params: {
                 }
 
                 const existing = candidateMap.get(key)
-                const scoreBoost = seed.weight * 2.2
-
                 candidateMap.set(key, {
                     id,
                     media_type: seed.media_type,
@@ -166,11 +189,11 @@ export async function getPersonalizedRecommendations(params: {
                     release_date: String(raw.release_date || raw.first_air_date || ''),
                     genre_ids: gids,
                     popularity: Number(raw.popularity || 0),
-                    score: (existing?.score ?? 0) + scoreBoost,
+                    score: (existing?.score ?? 0) + seed.weight * 2.2,
                 })
             }
         } catch {
-            // ignore missing recommendation lists
+            // ignore missing recommendations
         }
     })
 
@@ -181,10 +204,9 @@ export async function getPersonalizedRecommendations(params: {
         .map(([gid]) => gid)
 
     if (topGenreIds.length > 0) {
-        const genreQuery = topGenreIds.join('|')
         tasks.push(
             tmdbFetchJson<{ results?: Array<Record<string, unknown>> }>(
-                `/discover/movie?with_genres=${encodeURIComponent(genreQuery)}&sort_by=popularity.desc&vote_count.gte=150&page=1`
+                `/discover/movie?with_genres=${encodeURIComponent(topGenreIds.join('|'))}&sort_by=popularity.desc&vote_count.gte=150&page=1`
             )
                 .then((data) => {
                     for (const raw of (data.results ?? []).slice(0, 10)) {

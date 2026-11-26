@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Star, Play, Check, Tv, ListPlus, Award, Trash2 } from 'lucide-react'
+import { X, Star, Play, Check, Tv, ListPlus, Award, Trash2, ChevronDown } from 'lucide-react'
 import { posterUrl, getTrailerKey, getWatchProviders, type WatchProvidersSummary } from '../../lib/tmdb'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
@@ -408,17 +408,20 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
 
                     {user && lists.length > 0 && (
                         <div className="pt-2 border-t border-white/10 flex items-center gap-2">
-                            <select
-                                value={selectedListId}
-                                onChange={(e) => setSelectedListId(e.target.value)}
-                                className="flex-1 min-w-0 bg-[#22222C] border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
-                            >
-                                {lists.map((l) => (
-                                    <option key={l.id} value={l.id}>
-                                        {l.title} {l.is_collaborative ? '(Shared)' : ''}
-                                    </option>
-                                ))}
-                            </select>
+                            <div className="relative flex-1 min-w-0">
+                                <select
+                                    value={selectedListId}
+                                    onChange={(e) => setSelectedListId(e.target.value)}
+                                    className="w-full appearance-none bg-[#22222C] border border-white/10 rounded-xl pl-3 pr-8 py-2 text-xs text-white focus:outline-none focus:border-[#FF6B4A]"
+                                >
+                                    {lists.map((l) => (
+                                        <option key={l.id} value={l.id}>
+                                            {l.title} {l.is_collaborative ? '(Shared)' : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                                <ChevronDown className="w-3.5 h-3.5 text-zinc-400 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
+                            </div>
                             <button
                                 type="button"
                                 onClick={handleAddToList}

@@ -7,6 +7,7 @@ import {
     Check,
     Send,
     Edit3,
+    Trash2,
     Film,
     Tv,
     X,
@@ -69,7 +70,9 @@ export function ReviewsPage({
     const [composerError, setComposerError] = useState<string | null>(null)
     const [justPublishedTitle, setJustPublishedTitle] = useState<string | null>(null)
 
-    // Feed filter & search state
+    // Delete confirmation & feed filter state
+    const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+    const [deletingId, setDeletingId] = useState<string | null>(null)
     const [filter, setFilter] = useState<ReviewFilter>('all')
     const [reviewSearch, setReviewSearch] = useState('')
     const [openShareLogId, setOpenShareLogId] = useState<string | null>(null)
@@ -187,6 +190,35 @@ export function ReviewsPage({
         setJustPublishedTitle(publishedName)
         onLogsUpdated()
         setTimeout(() => setJustPublishedTitle(null), 3000)
+    }
+
+    async function handleConfirmDeleteReview(rev: MediaLog) {
+        if (!user || rev.user_id !== user.id || deletingId) return
+        setDeletingId(rev.id)
+
+        const { error } = await supabase
+            .from('media_logs')
+            .update({
+                review_text: null,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', rev.id)
+            .eq('user_id', user.id)
+
+        setDeletingId(null)
+        setConfirmDeleteId(null)
+
+        if (!error) {
+            if (
+                draftTarget &&
+                draftTarget.tmdb_id === rev.tmdb_id &&
+                draftTarget.media_type === rev.media_type
+            ) {
+                setDraftTarget(null)
+                setReviewText('')
+            }
+            onLogsUpdated()
+        }
     }
 
     const friendIds = useMemo(() => new Set(friends.map((f) => f.id)), [friends])
@@ -590,6 +622,7 @@ export function ReviewsPage({
                             const isMine = rev.user_id === user?.id
                             const authorHandle = rev.profiles?.username ?? 'user'
                             const isShareOpen = openShareLogId === rev.id
+                            const isConfirmingDelete = confirmDeleteId === rev.id
 
                             return (
                                 <article
@@ -662,24 +695,56 @@ export function ReviewsPage({
                                         </div>
                                     </div>
 
-                                    {/* Card Footer Actions: Edit (if mine) & Send Review to Chat/Forum */}
-                                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/5">
+                                    {/* Card Footer Actions: Edit & Confirm Delete (if mine) + Send Review */}
+                                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/5 flex-wrap">
                                         {isMine && (
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    selectTitleForReview({
-                                                        tmdb_id: rev.tmdb_id,
-                                                        media_type: rev.media_type,
-                                                        title: rev.title,
-                                                        poster_path: rev.poster_path,
-                                                    })
-                                                    window.scrollTo({ top: 0, behavior: 'smooth' })
-                                                }}
-                                                className="px-2.5 py-1 rounded-lg bg-[#22222C] hover:bg-[#2C2C38] text-[11px] font-semibold text-zinc-300 flex items-center gap-1 transition cursor-pointer"
-                                            >
-                                                <Edit3 className="w-3 h-3 text-[#FF9F43]" /> Edit
-                                            </button>
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setConfirmDeleteId(null)
+                                                        selectTitleForReview({
+                                                            tmdb_id: rev.tmdb_id,
+                                                            media_type: rev.media_type,
+                                                            title: rev.title,
+                                                            poster_path: rev.poster_path,
+                                                        })
+                                                        window.scrollTo({ top: 0, behavior: 'smooth' })
+                                                    }}
+                                                    className="px-2.5 py-1 rounded-lg bg-[#22222C] hover:bg-[#2C2C38] text-[11px] font-semibold text-zinc-300 flex items-center gap-1 transition cursor-pointer"
+                                                >
+                                                    <Edit3 className="w-3 h-3 text-[#FF9F43]" /> Edit
+                                                </button>
+
+                                                {isConfirmingDelete ? (
+                                                    <div className="flex items-center gap-1.5">
+                                                        <button
+                                                            type="button"
+                                                            disabled={deletingId === rev.id}
+                                                            onClick={() => handleConfirmDeleteReview(rev)}
+                                                            className="px-2.5 py-1 rounded-lg bg-red-500 hover:bg-red-600 text-white text-[11px] font-semibold transition cursor-pointer disabled:opacity-50"
+                                                        >
+                                                            {deletingId === rev.id ? 'Deleting...' : 'Confirm Delete'}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            disabled={deletingId === rev.id}
+                                                            onClick={() => setConfirmDeleteId(null)}
+                                                            className="px-2 py-1 rounded-lg bg-[#22222C] hover:bg-[#2C2C38] text-zinc-300 text-[11px] font-semibold transition cursor-pointer"
+                                                        >
+                                                            Cancel
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setConfirmDeleteId(rev.id)}
+                                                        className="px-2.5 py-1 rounded-lg bg-[#22222C] hover:bg-red-500/20 border border-transparent hover:border-red-500/30 text-[11px] font-semibold text-zinc-300 hover:text-red-400 flex items-center gap-1 transition cursor-pointer"
+                                                    >
+                                                        <Trash2 className="w-3 h-3 text-red-400" /> Delete
+                                                    </button>
+                                                )}
+                                            </>
                                         )}
 
                                         <button

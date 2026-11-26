@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { posterUrl } from '../../lib/tmdb'
+import { posterUrl, getPersonFilmography, type TMDBSearchResult } from '../../lib/tmdb'
 import { fileToDataUrl, renderCroppedAvatar } from '../../lib/avatarCrop'
 import type { MediaLog, Profile } from '../../types/database'
 import type { SelectedMedia } from '../media/MediaModal'
@@ -89,6 +89,9 @@ export function ProfileView({
     const [followingList, setFollowingList] = useState<Profile[]>([])
     const [followedCelebs, setFollowedCelebs] = useState<FollowedCeleb[]>([])
     const [unfollowingPersonId, setUnfollowingPersonId] = useState<number | null>(null)
+    const [selectedCeleb, setSelectedCeleb] = useState<FollowedCeleb | null>(null)
+    const [celebWorks, setCelebWorks] = useState<TMDBSearchResult[]>([])
+    const [loadingCelebWorks, setLoadingCelebWorks] = useState(false)
     const [viewerFollowingIds, setViewerFollowingIds] = useState<Set<string>>(new Set())
 
     const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -230,6 +233,8 @@ export function ProfileView({
             setFollowersList(connected)
             setFollowingList(connected)
             setFollowedCelebs((celebRows as FollowedCeleb[]) ?? [])
+            setSelectedCeleb(null)
+            setCelebWorks([])
             setViewerFollowingIds(new Set<string>(friendIds))
             setLoadingProfile(false)
         }
@@ -245,6 +250,10 @@ export function ProfileView({
         setUnfollowingPersonId(personId)
         const prev = followedCelebs
         setFollowedCelebs((curr) => curr.filter((c) => c.person_id !== personId))
+        if (selectedCeleb?.person_id === personId) {
+            setSelectedCeleb(null)
+            setCelebWorks([])
+        }
 
         const { error } = await supabase
             .from('followed_people')
@@ -256,6 +265,25 @@ export function ProfileView({
             setFollowedCelebs(prev)
         }
         setUnfollowingPersonId(null)
+    }
+
+    async function handleInspectCeleb(celeb: FollowedCeleb) {
+        if (selectedCeleb?.person_id === celeb.person_id) {
+            setSelectedCeleb(null)
+            setCelebWorks([])
+            return
+        }
+        setSelectedCeleb(celeb)
+        setLoadingCelebWorks(true)
+        setCelebWorks([])
+        try {
+            const works = await getPersonFilmography(celeb.person_id)
+            setCelebWorks(works)
+        } catch {
+            setCelebWorks([])
+        } finally {
+            setLoadingCelebWorks(false)
+        }
     }
 
     const mutualsList = useMemo(() => {
@@ -1234,45 +1262,114 @@ export function ProfileView({
                                         Not following any actors or directors yet.
                                     </p>
                                 ) : (
-                                    followedCelebs.map((celeb) => (
-                                        <div
-                                            key={celeb.id}
-                                            className="flex items-center justify-between gap-2.5 p-2 rounded-xl bg-[#14141A] border border-white/5"
-                                        >
-                                            <div className="flex items-center gap-2.5 min-w-0">
-                                                {celeb.profile_path ? (
-                                                    <img
-                                                        src={posterUrl(celeb.profile_path, 'w185')}
-                                                        alt={celeb.name}
-                                                        className="w-9 h-9 rounded-full object-cover border border-white/15 shrink-0"
-                                                    />
-                                                ) : (
-                                                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#FF6B4A]/30 to-[#FF9F43]/30 border border-white/15 flex items-center justify-center font-bold text-xs uppercase text-[#FF9F43] shrink-0">
-                                                        {celeb.name[0]}
-                                                    </div>
-                                                )}
-                                                <div className="min-w-0">
-                                                    <p className="text-xs font-bold text-white truncate">
-                                                        {celeb.name}
-                                                    </p>
-                                                    <p className="text-[11px] text-zinc-400 truncate">
-                                                        {celeb.role}
-                                                    </p>
-                                                </div>
-                                            </div>
-
-                                            {isOwnProfile && (
-                                                <button
-                                                    type="button"
-                                                    disabled={unfollowingPersonId === celeb.person_id}
-                                                    onClick={() => handleUnfollowCeleb(celeb.person_id)}
-                                                    className="px-2.5 py-1 rounded-lg bg-[#22222C] hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 text-[11px] font-semibold text-zinc-300 hover:text-red-400 flex items-center gap-1 transition cursor-pointer shrink-0 disabled:opacity-50"
+                                    <div className="space-y-2">
+                                        {followedCelebs.map((celeb) => {
+                                            const isSelected = selectedCeleb?.person_id === celeb.person_id
+                                            return (
+                                                <div
+                                                    key={celeb.id}
+                                                    className={`rounded-xl border transition ${
+                                                        isSelected
+                                                            ? 'bg-[#22222C] border-[#FF6B4A]'
+                                                            : 'bg-[#14141A] border-white/5 hover:border-white/15'
+                                                    }`}
                                                 >
-                                                    <UserMinus className="w-3 h-3" /> Unfollow
-                                                </button>
-                                            )}
-                                        </div>
-                                    ))
+                                                    <div className="flex items-center justify-between gap-2.5 p-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void handleInspectCeleb(celeb)}
+                                                            className="flex items-center gap-2.5 min-w-0 flex-1 text-left cursor-pointer group"
+                                                        >
+                                                            {celeb.profile_path ? (
+                                                                <img
+                                                                    src={posterUrl(celeb.profile_path, 'w185')}
+                                                                    alt={celeb.name}
+                                                                    className="w-9 h-9 rounded-full object-cover border border-white/15 shrink-0"
+                                                                />
+                                                            ) : (
+                                                                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#FF6B4A]/30 to-[#FF9F43]/30 border border-white/15 flex items-center justify-center font-bold text-xs uppercase text-[#FF9F43] shrink-0">
+                                                                    {celeb.name[0]}
+                                                                </div>
+                                                            )}
+                                                            <div className="min-w-0">
+                                                                <p className="text-xs font-bold text-white truncate group-hover:text-[#FF9F43] transition">
+                                                                    {celeb.name}
+                                                                </p>
+                                                                <p className="text-[11px] text-zinc-400 truncate">
+                                                                    {celeb.role} • Tap to see films
+                                                                </p>
+                                                            </div>
+                                                        </button>
+
+                                                        {isOwnProfile && (
+                                                            <button
+                                                                type="button"
+                                                                disabled={unfollowingPersonId === celeb.person_id}
+                                                                onClick={() => handleUnfollowCeleb(celeb.person_id)}
+                                                                className="px-2.5 py-1 rounded-lg bg-[#22222C] hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 text-[11px] font-semibold text-zinc-300 hover:text-red-400 flex items-center gap-1 transition cursor-pointer shrink-0 disabled:opacity-50"
+                                                            >
+                                                                <UserMinus className="w-3 h-3" /> Unfollow
+                                                            </button>
+                                                        )}
+                                                    </div>
+
+                                                    {isSelected && (
+                                                        <div className="px-2.5 pb-2.5 pt-1 border-t border-white/10">
+                                                            {loadingCelebWorks ? (
+                                                                <p className="text-[11px] text-zinc-400 py-2">
+                                                                    Loading filmography...
+                                                                </p>
+                                                            ) : celebWorks.length === 0 ? (
+                                                                <p className="text-[11px] text-zinc-500 py-1">
+                                                                    No titles found.
+                                                                </p>
+                                                            ) : (
+                                                                <div className="flex gap-2 overflow-x-auto pb-1 pt-1">
+                                                                    {celebWorks.map((work) => {
+                                                                        const workTitle =
+                                                                            work.title || work.name || 'Untitled'
+                                                                        return (
+                                                                            <button
+                                                                                key={`${work.media_type}-${work.id}`}
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    setSocialModal(null)
+                                                                                    onOpenMedia({
+                                                                                        tmdb_id: work.id,
+                                                                                        media_type: work.media_type,
+                                                                                        title: workTitle,
+                                                                                        poster_path: work.poster_path,
+                                                                                        overview: work.overview,
+                                                                                    })
+                                                                                }}
+                                                                                className="w-16 shrink-0 text-left group cursor-pointer"
+                                                                            >
+                                                                                {work.poster_path ? (
+                                                                                    <img
+                                                                                        src={posterUrl(
+                                                                                            work.poster_path,
+                                                                                            'w185'
+                                                                                        )}
+                                                                                        alt={workTitle}
+                                                                                        className="w-full aspect-[2/3] rounded-lg object-cover border border-white/10 group-hover:border-[#FF6B4A] transition"
+                                                                                    />
+                                                                                ) : (
+                                                                                    <div className="w-full aspect-[2/3] rounded-lg bg-[#18181F]" />
+                                                                                )}
+                                                                                <p className="text-[10px] font-semibold text-zinc-200 group-hover:text-[#FF9F43] truncate mt-1">
+                                                                                    {workTitle}
+                                                                                </p>
+                                                                            </button>
+                                                                        )
+                                                                    })}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
                                 )
                             ) : modalUsers.length === 0 ? (
                                 <p className="text-xs text-zinc-500 text-center py-6">

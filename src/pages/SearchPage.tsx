@@ -12,10 +12,10 @@ import {
     Plus,
     X,
     Flame,
+    Wand2,
 } from 'lucide-react'
 import {
     getTrending,
-    getTrendingPeople,
     searchMulti,
     searchPeople,
     getPersonFilmography,
@@ -23,6 +23,7 @@ import {
     type TMDBSearchResult,
     type TMDBPersonSearchResult,
 } from '../lib/tmdb'
+import { getRecommendedPeople, type RecommendedPerson } from '../lib/recommendations'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import type { MediaLog, Profile, TrailerComment } from '../types/database'
@@ -60,7 +61,7 @@ export function SearchPage({
                                onFollowUser,
                                onOpenMedia,
                            }: SearchPageProps) {
-    const { user } = useAuth()
+    const { user, profile } = useAuth()
     const inputRef = useRef<HTMLInputElement | null>(null)
     const [query, setQuery] = useState(initialQuery)
     const [activeTab, setActiveTab] = useState<SearchTab>('all')
@@ -81,9 +82,9 @@ export function SearchPage({
     const [personWorks, setPersonWorks] = useState<TMDBSearchResult[]>([])
     const [loadingPersonWorks, setLoadingPersonWorks] = useState(false)
 
-    // Default Explore / Trending state when search bar is empty
+    // Default Explore / Personalized state when search bar is empty
     const [trendingMedia, setTrendingMedia] = useState<TMDBSearchResult[]>([])
-    const [trendingPeople, setTrendingPeople] = useState<TMDBPersonSearchResult[]>([])
+    const [recommendedPeople, setRecommendedPeople] = useState<RecommendedPerson[]>([])
     const [discoverUsers, setDiscoverUsers] = useState<Profile[]>([])
     const [recentReviews, setRecentReviews] = useState<ReviewSearchHit[]>([])
 
@@ -95,7 +96,6 @@ export function SearchPage({
         if (initialQuery) setQuery(initialQuery)
     }, [initialQuery])
 
-    // Load user's followed actors/directors
     useEffect(() => {
         if (!user) return
         supabase
@@ -110,14 +110,21 @@ export function SearchPage({
             })
     }, [user])
 
-    // Load Trending Media, Trending People, Users, and Recent Reviews on mount
+    // Load Trending Media, Personalized Cast & Crew, Users, and Recent Reviews on mount
     useEffect(() => {
         let cancelled = false
         setLoadingExplore(true)
 
         Promise.all([
             getTrending(),
-            getTrendingPeople(),
+            user
+                ? supabase
+                    .from('media_logs')
+                    .select('*')
+                    .eq('user_id', user.id)
+                    .order('updated_at', { ascending: false })
+                    .limit(20)
+                : Promise.resolve({ data: [] }),
             supabase
                 .from('profiles')
                 .select('*')
@@ -138,19 +145,27 @@ export function SearchPage({
                 .limit(8),
         ])
             .then(
-                ([
-                     trendingHits,
-                     trendingCastHits,
-                     { data: usersData },
-                     { data: logsData },
-                     { data: commentsData },
-                 ]) => {
+                async ([
+                           trendingHits,
+                           { data: userLogsData },
+                           { data: usersData },
+                           { data: logsData },
+                           { data: commentsData },
+                       ]) => {
                     if (cancelled) return
 
                     const topTrending = trendingHits.slice(0, 8)
                     setTrendingMedia(topTrending)
-                    setTrendingPeople(trendingCastHits.slice(0, 6))
                     setDiscoverUsers((usersData as Profile[]) ?? [])
+
+                    if (user) {
+                        const recPeople = await getRecommendedPeople({
+                            userId: user.id,
+                            profile,
+                            myLogs: (userLogsData as MediaLog[]) ?? [],
+                        })
+                        if (!cancelled) setRecommendedPeople(recPeople)
+                    }
 
                     const titleByTmdb = new Map<string, { title: string; poster_path: string | null }>()
                     for (const m of topTrending) {
@@ -192,7 +207,8 @@ export function SearchPage({
                                 tmdb_id: comment.tmdb_id,
                                 media_type: comment.media_type,
                                 title:
-                                    meta?.title ?? `${comment.media_type === 'tv' ? 'TV' : 'Movie'} #${comment.tmdb_id}`,
+                                    meta?.title ??
+                                    `${comment.media_type === 'tv' ? 'TV' : 'Movie'} #${comment.tmdb_id}`,
                                 poster_path: meta?.poster_path ?? null,
                                 rating: comment.rating,
                                 text: comment.comment_text,
@@ -201,7 +217,9 @@ export function SearchPage({
                         }
                     }
 
-                    merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                    merged.sort(
+                        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                    )
                     setRecentReviews(merged.slice(0, 8))
                 }
             )
@@ -213,7 +231,7 @@ export function SearchPage({
         return () => {
             cancelled = true
         }
-    }, [user?.id])
+    }, [user, profile])
 
     // Live debounced search when query has text
     useEffect(() => {
@@ -312,7 +330,8 @@ export function SearchPage({
                             tmdb_id: comment.tmdb_id,
                             media_type: comment.media_type,
                             title:
-                                meta?.title ?? `${comment.media_type === 'tv' ? 'TV' : 'Movie'} #${comment.tmdb_id}`,
+                                meta?.title ??
+                                `${comment.media_type === 'tv' ? 'TV' : 'Movie'} #${comment.tmdb_id}`,
                             poster_path: meta?.poster_path ?? null,
                             rating: comment.rating,
                             text: comment.comment_text,
@@ -395,7 +414,9 @@ export function SearchPage({
 
     const isSearching = query.trim().length > 0
     const displayedMedia = isSearching ? mediaResults : trendingMedia
-    const displayedPeople = isSearching ? peopleResults : trendingPeople
+    const displayedPeople: (TMDBPersonSearchResult & { reason?: string })[] = isSearching
+        ? peopleResults
+        : recommendedPeople
     const displayedUsers = isSearching ? userResults : discoverUsers
     const displayedReviews = isSearching ? reviewResults : recentReviews
 
@@ -486,7 +507,9 @@ export function SearchPage({
                     Searching media, cast &amp; crew, users, and reviews...
                 </p>
             ) : !isSearching && loadingExplore ? (
-                <p className="text-xs text-zinc-400 py-4">Loading trending movies, people, and reviews...</p>
+                <p className="text-xs text-zinc-400 py-4">
+                    Loading personalized cast, trending movies, and reviews...
+                </p>
             ) : (
                 <div className="space-y-6">
                     {/* Trending / Matched Media Section */}
@@ -496,7 +519,8 @@ export function SearchPage({
                                 <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
                                     {isSearching ? (
                                         <>
-                                            <Film className="w-3.5 h-3.5 text-[#FF6B4A]" /> Movies &amp; TV ({displayedMedia.length})
+                                            <Film className="w-3.5 h-3.5 text-[#FF6B4A]" /> Movies &amp; TV (
+                                            {displayedMedia.length})
                                         </>
                                     ) : (
                                         <>
@@ -505,7 +529,9 @@ export function SearchPage({
                                     )}
                                 </h2>
                                 {!isSearching && displayedMedia.length > 0 && (
-                                    <span className="text-[11px] text-zinc-500">Click any card to watch trailer</span>
+                                    <span className="text-[11px] text-zinc-500">
+                                        Click any card to watch trailer
+                                    </span>
                                 )}
                             </div>
 
@@ -515,71 +541,83 @@ export function SearchPage({
                                 </p>
                             ) : (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                                    {(activeTab === 'all' ? displayedMedia.slice(0, 6) : displayedMedia).map((item) => {
-                                        const title = item.title || item.name || 'Untitled'
-                                        const year = (item.release_date || item.first_air_date || '').slice(0, 4)
-                                        const payload: SelectedMedia = {
-                                            tmdb_id: item.id,
-                                            media_type: item.media_type,
-                                            title,
-                                            poster_path: item.poster_path,
-                                            overview: item.overview,
-                                        }
+                                    {(activeTab === 'all' ? displayedMedia.slice(0, 6) : displayedMedia).map(
+                                        (item) => {
+                                            const title = item.title || item.name || 'Untitled'
+                                            const year = (
+                                                item.release_date ||
+                                                item.first_air_date ||
+                                                ''
+                                            ).slice(0, 4)
+                                            const payload: SelectedMedia = {
+                                                tmdb_id: item.id,
+                                                media_type: item.media_type,
+                                                title,
+                                                poster_path: item.poster_path,
+                                                overview: item.overview,
+                                            }
 
-                                        return (
-                                            <div
-                                                key={`${item.media_type}-${item.id}`}
-                                                onClick={() => setPreviewMedia(payload)}
-                                                className="bg-[#18181F] hover:bg-[#1E1E27] border border-white/10 hover:border-[#FF6B4A]/50 rounded-2xl p-2.5 flex items-center gap-3 transition cursor-pointer"
-                                            >
-                                                {item.poster_path ? (
-                                                    <img
-                                                        src={posterUrl(item.poster_path, 'w185')}
-                                                        alt={title}
-                                                        className="w-11 h-16 rounded-xl object-cover shrink-0"
-                                                    />
-                                                ) : (
-                                                    <div className="w-11 h-16 rounded-xl bg-[#22222C] shrink-0" />
-                                                )}
+                                            return (
+                                                <div
+                                                    key={`${item.media_type}-${item.id}`}
+                                                    onClick={() => setPreviewMedia(payload)}
+                                                    className="bg-[#18181F] hover:bg-[#1E1E27] border border-white/10 hover:border-[#FF6B4A]/50 rounded-2xl p-2.5 flex items-center gap-3 transition cursor-pointer"
+                                                >
+                                                    {item.poster_path ? (
+                                                        <img
+                                                            src={posterUrl(item.poster_path, 'w185')}
+                                                            alt={title}
+                                                            className="w-11 h-16 rounded-xl object-cover shrink-0"
+                                                        />
+                                                    ) : (
+                                                        <div className="w-11 h-16 rounded-xl bg-[#22222C] shrink-0" />
+                                                    )}
 
-                                                <div className="min-w-0 flex-1">
-                                                    <p className="text-xs font-bold text-white truncate">{title}</p>
-                                                    <p className="text-[11px] text-zinc-400 mt-0.5">
-                                                        {item.media_type === 'tv' ? 'TV Series' : 'Movie'}
-                                                        {year ? ` • ${year}` : ''}
-                                                        {item.vote_average ? ` • ★ ${item.vote_average.toFixed(1)}` : ''}
-                                                    </p>
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation()
-                                                            onOpenMedia(payload)
-                                                        }}
-                                                        className="mt-2 px-2.5 py-1 rounded-lg bg-[#22222C] hover:bg-[#FF6B4A] text-zinc-200 hover:text-white text-[11px] font-semibold inline-flex items-center gap-1 transition cursor-pointer"
-                                                    >
-                                                        <Plus className="w-3 h-3" /> Log / Review
-                                                    </button>
+                                                    <div className="min-w-0 flex-1">
+                                                        <p className="text-xs font-bold text-white truncate">
+                                                            {title}
+                                                        </p>
+                                                        <p className="text-[11px] text-zinc-400 mt-0.5">
+                                                            {item.media_type === 'tv' ? 'TV Series' : 'Movie'}
+                                                            {year ? ` • ${year}` : ''}
+                                                            {item.vote_average
+                                                                ? ` • ★ ${item.vote_average.toFixed(1)}`
+                                                                : ''}
+                                                        </p>
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation()
+                                                                onOpenMedia(payload)
+                                                            }}
+                                                            className="mt-2 px-2.5 py-1 rounded-lg bg-[#22222C] hover:bg-[#FF6B4A] text-zinc-200 hover:text-white text-[11px] font-semibold inline-flex items-center gap-1 transition cursor-pointer"
+                                                        >
+                                                            <Plus className="w-3 h-3" /> Log / Review
+                                                        </button>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        )
-                                    })}
+                                            )
+                                        }
+                                    )}
                                 </div>
                             )}
                         </section>
                     )}
 
-                    {/* Trending / Matched Actors & Directors Section */}
+                    {/* Recommended / Matched Actors & Directors Section */}
                     {showPeople && (
                         <section className="space-y-2.5">
                             <div className="flex items-center justify-between">
                                 <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
                                     {isSearching ? (
                                         <>
-                                            <Users className="w-3.5 h-3.5 text-[#FF6B4A]" /> Actors &amp; Directors ({displayedPeople.length})
+                                            <Users className="w-3.5 h-3.5 text-[#FF6B4A]" /> Actors &amp;
+                                            Directors ({displayedPeople.length})
                                         </>
                                     ) : (
                                         <>
-                                            <Flame className="w-3.5 h-3.5 text-[#FF9F43]" /> Trending Actors &amp; Directors
+                                            <Wand2 className="w-3.5 h-3.5 text-[#FF9F43]" /> Recommended
+                                            Actors &amp; Directors
                                         </>
                                     )}
                                 </h2>
@@ -590,13 +628,23 @@ export function SearchPage({
 
                             {displayedPeople.length === 0 ? (
                                 <p className="text-xs text-zinc-500 bg-[#18181F] border border-white/5 rounded-xl p-3">
-                                    No actors or directors found matching &ldquo;{query}&rdquo;.
+                                    {isSearching
+                                        ? `No actors or directors found matching "${query}".`
+                                        : 'Follow an actor or log a movie to get cast & director picks!'}
                                 </p>
                             ) : (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                                    {displayedPeople.map((person) => {
+                                    {(activeTab === 'all'
+                                            ? displayedPeople.slice(0, 6)
+                                            : displayedPeople
+                                    ).map((person) => {
                                         const isFollowing = followedPersonIds.has(person.id)
                                         const isInspected = inspectedPerson?.id === person.id
+                                        const subtitle = person.reason
+                                            ? `${person.role} • ${person.reason}`
+                                            : person.known_for_titles.length > 0
+                                                ? `${person.role} • ${person.known_for_titles.join(', ')}`
+                                                : person.role
 
                                         return (
                                             <div
@@ -626,10 +674,7 @@ export function SearchPage({
                                                             {person.name}
                                                         </p>
                                                         <p className="text-[11px] text-zinc-400 truncate">
-                                                            {person.role}
-                                                            {person.known_for_titles.length > 0
-                                                                ? ` • ${person.known_for_titles.join(', ')}`
-                                                                : ''}
+                                                            {subtitle}
                                                         </p>
                                                     </div>
                                                 </div>
@@ -845,13 +890,16 @@ export function SearchPage({
                                                             @{rev.username}
                                                         </span>
                                                         <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-zinc-400 shrink-0">
-                                                            {rev.source === 'trailer' ? 'Trailer Review' : 'Media Review'}
+                                                            {rev.source === 'trailer'
+                                                                ? 'Trailer Review'
+                                                                : 'Media Review'}
                                                         </span>
                                                     </div>
 
                                                     {rev.rating !== null && (
                                                         <span className="text-xs font-bold text-[#FF9F43] flex items-center gap-0.5 shrink-0">
-                                                            <Star className="w-3.5 h-3.5 fill-[#FF9F43]" /> {rev.rating}/5
+                                                            <Star className="w-3.5 h-3.5 fill-[#FF9F43]" />{' '}
+                                                            {rev.rating}/5
                                                         </span>
                                                     )}
                                                 </div>
@@ -872,7 +920,9 @@ export function SearchPage({
                                                     {rev.title}
                                                 </button>
 
-                                                <p className="text-xs text-zinc-300 leading-relaxed">{rev.text}</p>
+                                                <p className="text-xs text-zinc-300 leading-relaxed">
+                                                    {rev.text}
+                                                </p>
                                             </div>
                                         </div>
                                     ))}

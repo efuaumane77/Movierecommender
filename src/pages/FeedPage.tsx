@@ -13,10 +13,15 @@ import {
     Star,
     ArrowRight,
     MessageSquare,
+    Wand2,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 import { getTrending, posterUrl, type TMDBSearchResult } from '../lib/tmdb'
+import {
+    getPersonalizedRecommendations,
+    type RecommendedItem,
+} from '../lib/recommendations'
 import { GENRE_FORUMS } from '../lib/forums'
 import { FeedCard } from '../components/feed/FeedCard'
 import { TrailerPreviewModal } from '../components/media/TrailerPreviewModal'
@@ -93,6 +98,8 @@ export function FeedPage({
 
     const [trending, setTrending] = useState<TMDBSearchResult[]>([])
     const [loadingTrending, setLoadingTrending] = useState(true)
+    const [recommendations, setRecommendations] = useState<RecommendedItem[]>([])
+    const [loadingRecs, setLoadingRecs] = useState(true)
     const [feedFilter, setFeedFilter] = useState<FeedFilter>('all')
     const [togglingKey, setTogglingKey] = useState<string | null>(null)
     const [previewMedia, setPreviewMedia] = useState<SelectedMedia | null>(null)
@@ -116,6 +123,32 @@ export function FeedPage({
     }, [])
 
     const friendIds = useMemo(() => new Set(friends.map((f) => f.id)), [friends])
+
+    useEffect(() => {
+        if (!user) return
+        let cancelled = false
+        setLoadingRecs(true)
+
+        getPersonalizedRecommendations({
+            userId: user.id,
+            profile,
+            myLogs,
+            feedLogs,
+            friendIds,
+        })
+            .then((items) => {
+                if (!cancelled) setRecommendations(items)
+            })
+            .catch(console.error)
+            .finally(() => {
+                if (!cancelled) setLoadingRecs(false)
+            })
+
+        return () => {
+            cancelled = true
+        }
+    }, [user, profile, myLogs, feedLogs, friendIds])
+
     const joinedForums = useMemo(
         () => GENRE_FORUMS.filter((f) => joinedForumSlugs.includes(f.slug)),
         [joinedForumSlugs]
@@ -236,6 +269,128 @@ export function FeedPage({
                 </div>
             </section>
 
+            {/* Personalized "Recommended For You" Carousel */}
+            <section className="space-y-3">
+                <div className="flex items-center justify-between">
+                    <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
+                        <Wand2 className="w-4 h-4 text-[#FF6B4A]" /> Recommended For You
+                    </h2>
+                    <span className="text-[11px] text-zinc-400">
+                        Based on your watches, likes &amp; interests
+                    </span>
+                </div>
+
+                {loadingRecs ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        {[0, 1, 2, 3].map((idx) => (
+                            <div
+                                key={idx}
+                                className="h-60 rounded-2xl bg-[#18181F] border border-white/5 animate-pulse"
+                            />
+                        ))}
+                    </div>
+                ) : recommendations.length === 0 ? (
+                    <div className="bg-[#18181F] border border-white/10 rounded-2xl p-4 text-xs text-zinc-400">
+                        Like a few trailers or rate a movie to unlock personalized picks!
+                    </div>
+                ) : (
+                    <div className="flex gap-3 overflow-x-auto pb-2 snap-x">
+                        {recommendations.map((item) => {
+                            const year = (item.release_date || '').slice(0, 4)
+                            const key = `${item.media_type}-${item.id}`
+                            const inWatchlist = myWatchlistKeys.has(key)
+                            const busy = togglingKey === key
+                            const mediaPayload: SelectedMedia = {
+                                tmdb_id: item.id,
+                                media_type: item.media_type,
+                                title: item.title,
+                                poster_path: item.poster_path,
+                                overview: item.overview,
+                            }
+
+                            return (
+                                <div
+                                    key={key}
+                                    className="w-40 sm:w-44 shrink-0 snap-start bg-[#18181F] border border-white/10 rounded-2xl overflow-hidden flex flex-col justify-between group"
+                                >
+                                    <div
+                                        onClick={() => setPreviewMedia(mediaPayload)}
+                                        className="relative cursor-pointer"
+                                    >
+                                        {item.poster_path ? (
+                                            <img
+                                                src={posterUrl(item.poster_path, 'w342')}
+                                                alt={item.title}
+                                                className="w-full aspect-[2/3] object-cover group-hover:scale-105 transition duration-300"
+                                            />
+                                        ) : (
+                                            <div className="w-full aspect-[2/3] bg-[#22222C]" />
+                                        )}
+
+                                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-95" />
+
+                                        <span className="absolute top-2 left-2 right-10 px-2 py-0.5 rounded-full bg-black/75 backdrop-blur-xs border border-white/10 text-[9px] font-semibold text-[#FF9F43] truncate">
+                                            {item.reason}
+                                        </span>
+
+                                        <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/65 backdrop-blur-xs border border-white/15 flex items-center justify-center text-white group-hover:bg-[#FF6B4A] transition">
+                                            <Play className="w-3 h-3 fill-current ml-0.5" />
+                                        </span>
+
+                                        <div className="absolute bottom-2 inset-x-2.5">
+                                            <p className="text-xs font-bold text-white truncate">{item.title}</p>
+                                            <p className="text-[10px] text-zinc-300">
+                                                {item.media_type === 'tv' ? 'Series' : 'Movie'}
+                                                {year ? ` • ${year}` : ''}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="p-2 flex items-center gap-1.5 bg-[#14141A]">
+                                        <button
+                                            type="button"
+                                            disabled={busy}
+                                            onClick={() =>
+                                                handleToggleWatchlistItem({
+                                                    tmdb_id: item.id,
+                                                    media_type: item.media_type,
+                                                    title: item.title,
+                                                    poster_path: item.poster_path,
+                                                })
+                                            }
+                                            className={`flex-1 py-1.5 rounded-lg text-[10px] font-semibold flex items-center justify-center gap-1 transition cursor-pointer ${
+                                                inWatchlist
+                                                    ? 'bg-[#FF6B4A]/20 text-[#FF9F43] border border-[#FF6B4A]/40'
+                                                    : 'bg-[#22222C] hover:bg-[#2C2C38] text-zinc-200'
+                                            }`}
+                                        >
+                                            {inWatchlist ? (
+                                                <>
+                                                    <Bookmark className="w-2.5 h-2.5 fill-[#FF9F43]" /> Saved
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Plus className="w-2.5 h-2.5" /> Watchlist
+                                                </>
+                                            )}
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => onOpenMedia?.(mediaPayload)}
+                                            title="Rate or log"
+                                            className="px-2 py-1.5 rounded-lg bg-[#22222C] hover:bg-[#FF6B4A] text-zinc-300 hover:text-white text-[10px] font-semibold transition cursor-pointer"
+                                        >
+                                            Log
+                                        </button>
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+                )}
+            </section>
+
             {/* Tonight's Trending Carousel */}
             <section className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -298,8 +453,8 @@ export function FeedPage({
                                         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/15 to-transparent opacity-90" />
 
                                         <span className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/65 backdrop-blur-xs border border-white/15 flex items-center justify-center text-white group-hover:bg-[#FF6B4A] transition">
-                      <Play className="w-3 h-3 fill-current ml-0.5" />
-                    </span>
+                                            <Play className="w-3 h-3 fill-current ml-0.5" />
+                                        </span>
 
                                         <div className="absolute bottom-2 inset-x-2.5">
                                             <p className="text-xs font-bold text-white truncate">{title}</p>
@@ -402,8 +557,8 @@ export function FeedPage({
                     <h1 className="text-base font-bold flex items-center gap-2">
                         <Flame className="w-5 h-5 text-[#FF6B4A]" /> Activity Feed
                         <span className="text-xs font-normal text-zinc-400">
-              ({filteredLogs.length})
-            </span>
+                            ({filteredLogs.length})
+                        </span>
                     </h1>
 
                     <div className="flex items-center gap-1.5 bg-[#18181F] p-1 rounded-xl border border-white/10 w-fit">

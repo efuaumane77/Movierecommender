@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { X, Star, Play, Check, Tv, ListPlus, Award, Trash2, ChevronDown, FolderPlus } from 'lucide-react'
+import { X, Play, Check, Tv, ListPlus, Award, Trash2, ChevronDown, FolderPlus } from 'lucide-react'
 import { posterUrl, getTrailerKey, getWatchProviders, type WatchProvidersSummary } from '../../lib/tmdb'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import type { CustomList, FavoritePin, MediaLog, MediaStatus } from '../../types/database'
+import { StarRatingInput } from './StarRatingInput'
 
 export interface SelectedMedia {
     tmdb_id: number
@@ -428,23 +429,7 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
 
                     <div>
                         <label className="block text-xs text-zinc-400 mb-1.5">Your Rating</label>
-                        <div className="flex items-center gap-1.5">
-                            {[1, 2, 3, 4, 5].map((star) => (
-                                <button
-                                    key={star}
-                                    type="button"
-                                    onClick={() => setRating(rating === star ? 0 : star)}
-                                    className="p-1 cursor-pointer"
-                                >
-                                    <Star
-                                        className={`w-6 h-6 transition ${
-                                            star <= rating ? 'text-[#FF9F43] fill-[#FF9F43]' : 'text-zinc-600'
-                                        }`}
-                                    />
-                                </button>
-                            ))}
-                            {rating > 0 && <span className="text-xs text-zinc-400 ml-2">{rating}/5</span>}
-                        </div>
+                        <StarRatingInput value={rating} onChange={setRating} />
                     </div>
 
                     <div>

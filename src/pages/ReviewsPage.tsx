@@ -23,6 +23,7 @@ import {
     type TMDBSearchResult,
 } from '../lib/tmdb'
 import { GENRE_FORUMS } from '../lib/forums'
+import { StarRatingInput } from '../components/media/StarRatingInput'
 import type { MediaLog, MediaStatus, Profile } from '../types/database'
 import type { SelectedMedia } from '../components/media/MediaModal'
 
@@ -36,8 +37,6 @@ interface ReviewsPageProps {
 }
 
 type ReviewFilter = 'all' | 'friends' | 'mine'
-
-const RATING_STEPS = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5]
 
 export function ReviewsPage({
                                 feedLogs,
@@ -131,7 +130,7 @@ export function ReviewsPage({
             (l) => l.tmdb_id === item.tmdb_id && l.media_type === item.media_type
         )
         if (existing) {
-            setStatus(existing.status)
+            setStatus(existing.status === 'watching' ? 'watching' : 'watched')
             setRating(existing.rating ?? 4.5)
             setReviewText(existing.review_text ?? '')
         } else {
@@ -166,7 +165,7 @@ export function ReviewsPage({
                 title: draftTarget.title,
                 poster_path: draftTarget.poster_path,
                 status,
-                rating,
+                rating: rating > 0 ? rating : null,
                 review_text: reviewText.trim(),
                 season: existing?.season ?? 1,
                 episode: existing?.episode ?? 0,
@@ -279,7 +278,7 @@ export function ReviewsPage({
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-lg font-bold text-white flex items-center gap-2">
-                        <Star className="w-5 h-5 text-[#FF9F43] fill-[#FF9F43]" /> Reviews & Ratings
+                        <Star className="w-5 h-5 text-[#FF9F43] fill-[#FF9F43]" /> Reviews &amp; Ratings
                     </h1>
                     <p className="text-xs text-zinc-400 mt-0.5">
                         Write a review for any movie or series, or read what friends are saying.
@@ -295,8 +294,8 @@ export function ReviewsPage({
                     </h2>
                     {justPublishedTitle && (
                         <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
-              <Check className="w-3.5 h-3.5" /> Published review for {justPublishedTitle}!
-            </span>
+                            <Check className="w-3.5 h-3.5" /> Published review for {justPublishedTitle}!
+                        </span>
                     )}
                 </div>
 
@@ -376,8 +375,8 @@ export function ReviewsPage({
                                                         </p>
                                                     </div>
                                                     <span className="text-[11px] font-semibold text-[#FF9F43] px-2.5 py-1 rounded-lg bg-[#FF6B4A]/15 shrink-0">
-                            Select
-                          </span>
+                                                        Select
+                                                    </span>
                                                 </button>
                                             )
                                         })
@@ -472,27 +471,12 @@ export function ReviewsPage({
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            {/* Rating Picker */}
+                            {/* Star Rating Picker */}
                             <div>
                                 <label className="block text-[11px] font-semibold text-zinc-400 mb-1.5">
-                                    Your Rating ({rating} / 5)
+                                    Your Rating
                                 </label>
-                                <div className="flex flex-wrap gap-1">
-                                    {RATING_STEPS.map((val) => (
-                                        <button
-                                            key={val}
-                                            type="button"
-                                            onClick={() => setRating(val)}
-                                            className={`px-2 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
-                                                rating === val
-                                                    ? 'bg-gradient-to-r from-[#FF6B4A] to-[#FF9F43] text-white'
-                                                    : 'bg-[#22222C] text-zinc-400 hover:text-white'
-                                            }`}
-                                        >
-                                            {val}★
-                                        </button>
-                                    ))}
-                                </div>
+                                <StarRatingInput value={rating} onChange={setRating} />
                             </div>
 
                             {/* Status Picker */}
@@ -667,8 +651,8 @@ export function ReviewsPage({
 
                                                 {rev.rating !== null && (
                                                     <span className="px-2.5 py-1 rounded-lg bg-[#22222C] text-xs font-bold text-[#FF9F43] flex items-center gap-1 shrink-0">
-                            <Star className="w-3.5 h-3.5 fill-[#FF9F43]" /> {rev.rating}/5
-                          </span>
+                                                        <Star className="w-3.5 h-3.5 fill-[#FF9F43]" /> {rev.rating}/5
+                                                    </span>
                                                 )}
                                             </div>
 

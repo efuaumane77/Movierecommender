@@ -168,30 +168,15 @@ export function ProfileView({
         setLoadingProfile(true)
 
         async function loadProfileAndSocial() {
-            const [
-                { data: profRow },
-                { data: incomingFollows },
-                { data: outgoingFollows },
-                { data: myFollows },
-            ] = await Promise.all([
+            const [{ data: profRow }, { data: acceptedRows }] = await Promise.all([
                 supabase.from('profiles').select('*').eq('id', targetUserId).single(),
                 supabase
                     .from('friendships')
-                    .select('requester:profiles!friendships_requester_id_fkey(*)')
-                    .eq('addressee_id', targetUserId)
+                    .select(
+                        'requester_id, addressee_id, requester:profiles!friendships_requester_id_fkey(*), addressee:profiles!friendships_addressee_id_fkey(*)'
+                    )
+                    .or(`requester_id.eq.${targetUserId},addressee_id.eq.${targetUserId}`)
                     .eq('status', 'accepted'),
-                supabase
-                    .from('friendships')
-                    .select('addressee:profiles!friendships_addressee_id_fkey(*)')
-                    .eq('requester_id', targetUserId)
-                    .eq('status', 'accepted'),
-                user
-                    ? supabase
-                        .from('friendships')
-                        .select('addressee_id')
-                        .eq('requester_id', user.id)
-                        .eq('status', 'accepted')
-                    : Promise.resolve({ data: [] }),
             ])
 
             if (cancelled) return
@@ -208,28 +193,25 @@ export function ProfileView({
                 setWatchedVisibility(loadedProfile.watched_visibility ?? 'everyone')
             }
 
-            const followers = (
-                (incomingFollows as unknown as { requester: Profile | Profile[] | null }[]) ?? []
-            )
-                .map((r) => (Array.isArray(r.requester) ? r.requester[0] : r.requester))
-                .filter((p): p is Profile => Boolean(p))
-
-            const following = (
-                (outgoingFollows as unknown as { addressee: Profile | Profile[] | null }[]) ?? []
-            )
-                .map((r) => (Array.isArray(r.addressee) ? r.addressee[0] : r.addressee))
-                .filter((p): p is Profile => Boolean(p))
-
-            setFollowersList(followers)
-            setFollowingList(following)
-
-            const viewerSet = new Set<string>(
-                ((myFollows as { addressee_id: string }[]) ?? []).map((r) => r.addressee_id)
-            )
-            if (user) {
-                friendIds.forEach((id) => viewerSet.add(id))
+            const connectedMap = new Map<string, Profile>()
+            for (const row of (acceptedRows as unknown as {
+                requester_id: string
+                addressee_id: string
+                requester: Profile | Profile[] | null
+                addressee: Profile | Profile[] | null
+            }[]) ?? []) {
+                const isReq = row.requester_id === targetUserId
+                const rawOther = isReq ? row.addressee : row.requester
+                const other = Array.isArray(rawOther) ? rawOther[0] : rawOther
+                if (other && other.id !== targetUserId) {
+                    connectedMap.set(other.id, other)
+                }
             }
-            setViewerFollowingIds(viewerSet)
+
+            const connected = Array.from(connectedMap.values())
+            setFollowersList(connected)
+            setFollowingList(connected)
+            setViewerFollowingIds(new Set<string>(friendIds))
             setLoadingProfile(false)
         }
 
@@ -470,7 +452,6 @@ export function ProfileView({
     const interests = profileData.interests ?? []
     const isFollowingTarget = friendIds.has(targetUserId)
     const isRequestedTarget = outgoingRequestIds.has(targetUserId)
-    const followingCount = isOwnProfile ? friendIds.size : followingList.length
 
     const modalUsers =
         socialModal === 'followers'
@@ -661,7 +642,7 @@ export function ProfileView({
                                 onClick={() => setSocialModal('following')}
                                 className="hover:underline cursor-pointer"
                             >
-                                <strong className="text-white font-bold">{followingCount}</strong>{' '}
+                                <strong className="text-white font-bold">{followingList.length}</strong>{' '}
                                 <span className="text-zinc-400">following</span>
                             </button>
 

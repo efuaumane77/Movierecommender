@@ -63,6 +63,9 @@ export function AppShell({
     const navigate = useNavigate()
     const isTrailersRoute = location.pathname === '/trailers'
     const isSettingsRoute = location.pathname === '/settings'
+    const isProfileRoute =
+        location.pathname === '/library' || location.pathname.startsWith('/profile')
+    const hideRightRail = isTrailersRoute || isSettingsRoute || isProfileRoute
 
     const searchInputRef = useRef<HTMLInputElement | null>(null)
     const settingsMenuRef = useRef<HTMLDivElement | null>(null)
@@ -217,8 +220,8 @@ export function AppShell({
                                                 </p>
                                             </div>
                                             <span className="text-xs font-medium text-[#FF6B4A] px-2.5 py-1 rounded-lg bg-[#FF6B4A]/10 shrink-0">
-                        + Review
-                      </span>
+                                                + Review
+                                            </span>
                                         </button>
                                     )
                                 })
@@ -256,8 +259,8 @@ export function AppShell({
                             </div>
                         )}
                         <span className="text-sm font-medium text-zinc-200 hidden lg:inline">
-              {headerLabel}
-            </span>
+                            {headerLabel}
+                        </span>
                     </button>
 
                     {settingsOpen && (
@@ -300,17 +303,17 @@ export function AppShell({
                                     }}
                                     className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-medium text-zinc-200 hover:bg-[#22222C] transition cursor-pointer text-left"
                                 >
-                  <span className="flex items-center gap-2.5">
-                    {isLight ? (
-                        <Moon className="w-3.5 h-3.5 text-zinc-300" />
-                    ) : (
-                        <Sun className="w-3.5 h-3.5 text-[#FF9F43]" />
-                    )}
-                      <span>Theme</span>
-                  </span>
+                                    <span className="flex items-center gap-2.5">
+                                        {isLight ? (
+                                            <Moon className="w-3.5 h-3.5 text-zinc-300" />
+                                        ) : (
+                                            <Sun className="w-3.5 h-3.5 text-[#FF9F43]" />
+                                        )}
+                                        <span>Theme</span>
+                                    </span>
                                     <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/10 text-zinc-200 capitalize">
-                    {prefs.theme}
-                  </span>
+                                        {prefs.theme}
+                                    </span>
                                 </button>
 
                                 <button
@@ -319,17 +322,17 @@ export function AppShell({
                                     onClick={handleToggleWatchedPrivacy}
                                     className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-medium text-zinc-200 hover:bg-[#22222C] transition cursor-pointer text-left"
                                 >
-                  <span className="flex items-center gap-2.5">
-                    {isFollowersOnly ? (
-                        <Lock className="w-3.5 h-3.5 text-[#FF6B4A]" />
-                    ) : (
-                        <Globe className="w-3.5 h-3.5 text-emerald-400" />
-                    )}
-                      <span>Watched Library</span>
-                  </span>
+                                    <span className="flex items-center gap-2.5">
+                                        {isFollowersOnly ? (
+                                            <Lock className="w-3.5 h-3.5 text-[#FF6B4A]" />
+                                        ) : (
+                                            <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                                        )}
+                                        <span>Watched Library</span>
+                                    </span>
                                     <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/10 text-zinc-200">
-                    {isFollowersOnly ? 'Followers' : 'Everyone'}
-                  </span>
+                                        {isFollowersOnly ? 'Followers' : 'Everyone'}
+                                    </span>
                                 </button>
                             </div>
 
@@ -368,20 +371,24 @@ export function AppShell({
                 />
 
                 <main
-                    className={`flex-1 min-w-0 pb-24 md:pb-6 ${
+                    className={`flex-1 min-w-0 pb-24 md:pb-6 flex justify-center ${
                         isTrailersRoute ? 'px-4 sm:px-6 py-4' : 'px-4 sm:px-6 py-6'
                     }`}
                 >
                     <div
                         className={`w-full mx-auto ${
-                            isTrailersRoute || isSettingsRoute ? 'max-w-5xl' : 'max-w-4xl'
+                            isTrailersRoute || isSettingsRoute
+                                ? 'max-w-5xl'
+                                : isProfileRoute
+                                    ? 'max-w-3xl'
+                                    : 'max-w-4xl'
                         }`}
                     >
                         <Outlet />
                     </div>
                 </main>
 
-                {!isTrailersRoute && !isSettingsRoute && (
+                {!hideRightRail && (
                     <RightRail
                         suggestedUsers={visibleSuggestions}
                         outgoingRequestIds={outgoingRequestIds}

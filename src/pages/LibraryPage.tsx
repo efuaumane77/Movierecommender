@@ -121,7 +121,7 @@ export function LibraryPage({
                 </button>
             )}
 
-            {/* Clean Instagram-Inspired Profile Header + Watched / Watchlist / Reviews Tabs */}
+            {/* Centered Profile Header + Watched / Watchlist / Reviews Tabs */}
             <ProfileView
                 targetUserId={targetUserId}
                 allLogs={combinedLogs}

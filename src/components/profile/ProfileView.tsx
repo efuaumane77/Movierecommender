@@ -13,6 +13,7 @@ import {
     Star,
     Trash2,
     Upload,
+    UserMinus,
     UserPlus,
     Users,
     X,
@@ -40,6 +41,15 @@ const AVAILABLE_INTERESTS = [
 
 type ProfileTab = 'watched' | 'watchlist' | 'reviews'
 type SocialListModal = 'followers' | 'following' | 'mutuals' | null
+type FollowingSubTab = 'friends' | 'celebs'
+
+interface FollowedCeleb {
+    id: string
+    person_id: number
+    name: string
+    role: 'Actor' | 'Director'
+    profile_path: string | null
+}
 
 interface ProfileViewProps {
     targetUserId: string
@@ -73,9 +83,12 @@ export function ProfileView({
     const [loadingProfile, setLoadingProfile] = useState(true)
     const [activeTab, setActiveTab] = useState<ProfileTab>('watched')
     const [socialModal, setSocialModal] = useState<SocialListModal>(null)
+    const [followingSubTab, setFollowingSubTab] = useState<FollowingSubTab>('friends')
 
     const [followersList, setFollowersList] = useState<Profile[]>([])
     const [followingList, setFollowingList] = useState<Profile[]>([])
+    const [followedCelebs, setFollowedCelebs] = useState<FollowedCeleb[]>([])
+    const [unfollowingPersonId, setUnfollowingPersonId] = useState<number | null>(null)
     const [viewerFollowingIds, setViewerFollowingIds] = useState<Set<string>>(new Set())
 
     const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -168,7 +181,7 @@ export function ProfileView({
         setLoadingProfile(true)
 
         async function loadProfileAndSocial() {
-            const [{ data: profRow }, { data: acceptedRows }] = await Promise.all([
+            const [{ data: profRow }, { data: acceptedRows }, { data: celebRows }] = await Promise.all([
                 supabase.from('profiles').select('*').eq('id', targetUserId).single(),
                 supabase
                     .from('friendships')
@@ -177,6 +190,11 @@ export function ProfileView({
                     )
                     .or(`requester_id.eq.${targetUserId},addressee_id.eq.${targetUserId}`)
                     .eq('status', 'accepted'),
+                supabase
+                    .from('followed_people')
+                    .select('id, person_id, name, role, profile_path')
+                    .eq('user_id', targetUserId)
+                    .order('created_at', { ascending: false }),
             ])
 
             if (cancelled) return
@@ -211,6 +229,7 @@ export function ProfileView({
             const connected = Array.from(connectedMap.values())
             setFollowersList(connected)
             setFollowingList(connected)
+            setFollowedCelebs((celebRows as FollowedCeleb[]) ?? [])
             setViewerFollowingIds(new Set<string>(friendIds))
             setLoadingProfile(false)
         }
@@ -220,6 +239,24 @@ export function ProfileView({
             cancelled = true
         }
     }, [targetUserId, user, friendIds, authProfile])
+
+    async function handleUnfollowCeleb(personId: number) {
+        if (!user || !isOwnProfile || unfollowingPersonId === personId) return
+        setUnfollowingPersonId(personId)
+        const prev = followedCelebs
+        setFollowedCelebs((curr) => curr.filter((c) => c.person_id !== personId))
+
+        const { error } = await supabase
+            .from('followed_people')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('person_id', personId)
+
+        if (error) {
+            setFollowedCelebs(prev)
+        }
+        setUnfollowingPersonId(null)
+    }
 
     const mutualsList = useMemo(() => {
         return followersList.filter((person) => viewerFollowingIds.has(person.id))
@@ -639,10 +676,15 @@ export function ProfileView({
 
                             <button
                                 type="button"
-                                onClick={() => setSocialModal('following')}
+                                onClick={() => {
+                                    setFollowingSubTab('friends')
+                                    setSocialModal('following')
+                                }}
                                 className="hover:underline cursor-pointer"
                             >
-                                <strong className="text-white font-bold">{followingList.length}</strong>{' '}
+                                <strong className="text-white font-bold">
+                                    {followingList.length + followedCelebs.length}
+                                </strong>{' '}
                                 <span className="text-zinc-400">following</span>
                             </button>
 
@@ -1145,7 +1187,9 @@ export function ProfileView({
                                 <Users className="w-4 h-4 text-[#FF6B4A]" />
                                 {socialModal === 'mutuals'
                                     ? `Mutual Followers (${modalUsers.length})`
-                                    : `${socialModal} (${modalUsers.length})`}
+                                    : socialModal === 'following'
+                                        ? `Following (${followingList.length + followedCelebs.length})`
+                                        : `${socialModal} (${modalUsers.length})`}
                             </h3>
                             <button
                                 type="button"
@@ -1156,8 +1200,81 @@ export function ProfileView({
                             </button>
                         </div>
 
+                        {socialModal === 'following' && (
+                            <div className="px-4 pt-3 flex items-center gap-1.5">
+                                <button
+                                    type="button"
+                                    onClick={() => setFollowingSubTab('friends')}
+                                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                                        followingSubTab === 'friends'
+                                            ? 'bg-[#FF6B4A] text-white'
+                                            : 'bg-[#22222C] text-zinc-400 hover:text-white'
+                                    }`}
+                                >
+                                    Friends ({followingList.length})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setFollowingSubTab('celebs')}
+                                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                                        followingSubTab === 'celebs'
+                                            ? 'bg-[#FF6B4A] text-white'
+                                            : 'bg-[#22222C] text-zinc-400 hover:text-white'
+                                    }`}
+                                >
+                                    Following Celebs ({followedCelebs.length})
+                                </button>
+                            </div>
+                        )}
+
                         <div className="max-h-80 overflow-y-auto p-3 space-y-2">
-                            {modalUsers.length === 0 ? (
+                            {socialModal === 'following' && followingSubTab === 'celebs' ? (
+                                followedCelebs.length === 0 ? (
+                                    <p className="text-xs text-zinc-500 text-center py-6">
+                                        Not following any actors or directors yet.
+                                    </p>
+                                ) : (
+                                    followedCelebs.map((celeb) => (
+                                        <div
+                                            key={celeb.id}
+                                            className="flex items-center justify-between gap-2.5 p-2 rounded-xl bg-[#14141A] border border-white/5"
+                                        >
+                                            <div className="flex items-center gap-2.5 min-w-0">
+                                                {celeb.profile_path ? (
+                                                    <img
+                                                        src={posterUrl(celeb.profile_path, 'w185')}
+                                                        alt={celeb.name}
+                                                        className="w-9 h-9 rounded-full object-cover border border-white/15 shrink-0"
+                                                    />
+                                                ) : (
+                                                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#FF6B4A]/30 to-[#FF9F43]/30 border border-white/15 flex items-center justify-center font-bold text-xs uppercase text-[#FF9F43] shrink-0">
+                                                        {celeb.name[0]}
+                                                    </div>
+                                                )}
+                                                <div className="min-w-0">
+                                                    <p className="text-xs font-bold text-white truncate">
+                                                        {celeb.name}
+                                                    </p>
+                                                    <p className="text-[11px] text-zinc-400 truncate">
+                                                        {celeb.role}
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            {isOwnProfile && (
+                                                <button
+                                                    type="button"
+                                                    disabled={unfollowingPersonId === celeb.person_id}
+                                                    onClick={() => handleUnfollowCeleb(celeb.person_id)}
+                                                    className="px-2.5 py-1 rounded-lg bg-[#22222C] hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 text-[11px] font-semibold text-zinc-300 hover:text-red-400 flex items-center gap-1 transition cursor-pointer shrink-0 disabled:opacity-50"
+                                                >
+                                                    <UserMinus className="w-3 h-3" /> Unfollow
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))
+                                )
+                            ) : modalUsers.length === 0 ? (
                                 <p className="text-xs text-zinc-500 text-center py-6">
                                     No accounts in this list yet.
                                 </p>

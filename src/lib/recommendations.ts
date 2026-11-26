@@ -149,7 +149,6 @@ export async function getPersonalizedRecommendations(params: {
         })
     }
 
-    // Dwell-time signal: >60% watch completion (+3), <3s quick skip (-2)
     for (const view of trailerViews ?? []) {
         const mediaType = view.media_type === 'tv' ? 'tv' : 'movie'
         const key = `${mediaType}-${view.tmdb_id}`
@@ -214,7 +213,6 @@ export async function getPersonalizedRecommendations(params: {
         }
     })
 
-    // Followed actors & directors filmography boost
     const followedList = ((followedPeople ?? []) as FollowedPersonRow[]).slice(0, 4)
     for (const person of followedList) {
         tasks.push(
@@ -359,4 +357,255 @@ export async function getPersonalizedRecommendations(params: {
     return Array.from(candidateMap.values())
         .sort((a, b) => b.score - a.score)
         .slice(0, 16)
+}
+
+export interface RecommendedPerson {
+    id: number
+    name: string
+    role: 'Director' | 'Actor'
+    profile_path: string | null
+    known_for_titles: string[]
+    reason: string
+    score: number
+}
+
+export async function getRecommendedPeople(params: {
+    userId: string
+    profile: Profile | null
+    myLogs: MediaLog[]
+}): Promise<RecommendedPerson[]> {
+    const { userId, profile, myLogs } = params
+
+    const { data: followedRows } = await supabase
+        .from('followed_people')
+        .select('person_id, name, role')
+        .eq('user_id', userId)
+        .limit(15)
+
+    const followedList = (followedRows ?? []) as FollowedPersonRow[]
+    const followedSet = new Set<number>(followedList.map((f) => Number(f.person_id)))
+
+    const personMap = new Map<number, RecommendedPerson>()
+
+    function upsertCandidate(
+        raw: {
+            id: number
+            name: string
+            role: 'Director' | 'Actor'
+            profile_path: string | null
+            known_for?: string
+        },
+        points: number,
+        reason: string
+    ) {
+        if (!raw.id || !raw.profile_path) return
+        const existing = personMap.get(raw.id)
+        if (existing) {
+            existing.score += points
+            if (
+                raw.known_for &&
+                !existing.known_for_titles.includes(raw.known_for) &&
+                existing.known_for_titles.length < 3
+            ) {
+                existing.known_for_titles.push(raw.known_for)
+            }
+        } else {
+            personMap.set(raw.id, {
+                id: raw.id,
+                name: raw.name,
+                role: raw.role,
+                profile_path: raw.profile_path,
+                known_for_titles: raw.known_for ? [raw.known_for] : [],
+                reason,
+                score: points,
+            })
+        }
+    }
+
+    const tasks: Promise<void>[] = []
+
+    // 1. Collaborators & co-stars from actors/directors you follow
+    for (const followed of followedList.slice(0, 3)) {
+        tasks.push(
+            tmdbFetchJson<{
+                cast?: Array<Record<string, unknown>>
+                crew?: Array<Record<string, unknown>>
+            }>(`/person/${followed.person_id}/combined_credits`)
+                .then(async (credits) => {
+                    const topWorks = [
+                        ...(credits.crew ?? []).filter((c) => c.job === 'Director'),
+                        ...(credits.cast ?? []),
+                    ]
+                        .filter(
+                            (w) =>
+                                (w.media_type === 'movie' || w.media_type === 'tv') &&
+                                Number(w.vote_count || 0) >= 300
+                        )
+                        .sort((a, b) => Number(b.vote_count || 0) - Number(a.vote_count || 0))
+                        .slice(0, 2)
+
+                    for (const work of topWorks) {
+                        const mType = work.media_type === 'tv' ? 'tv' : 'movie'
+                        const workTitle = String(work.title || work.name || '')
+                        const fullCredits = await tmdbFetchJson<{
+                            cast?: Array<{ id: number; name: string; profile_path: string | null }>
+                            crew?: Array<{
+                                id: number
+                                name: string
+                                job?: string
+                                profile_path: string | null
+                            }>
+                        }>(`/${mType}/${work.id}/credits`)
+
+                        for (const d of (fullCredits.crew ?? [])
+                            .filter((c) => c.job === 'Director')
+                            .slice(0, 1)) {
+                            upsertCandidate(
+                                {
+                                    id: d.id,
+                                    name: d.name,
+                                    role: 'Director',
+                                    profile_path: d.profile_path,
+                                    known_for: workTitle,
+                                },
+                                4.5,
+                                `Worked with ${followed.name}`
+                            )
+                        }
+                        for (const a of (fullCredits.cast ?? []).slice(0, 4)) {
+                            upsertCandidate(
+                                {
+                                    id: a.id,
+                                    name: a.name,
+                                    role: 'Actor',
+                                    profile_path: a.profile_path,
+                                    known_for: workTitle,
+                                },
+                                3.5,
+                                `Co-starred with ${followed.name}`
+                            )
+                        }
+                    }
+                })
+                .catch(() => {})
+        )
+    }
+
+    // 2. Directors & lead cast from your logged / high-rated movies & shows
+    const topLogged = [...myLogs]
+        .sort((a, b) => (b.rating ?? 3) - (a.rating ?? 3))
+        .slice(0, 3)
+
+    for (const log of topLogged) {
+        tasks.push(
+            tmdbFetchJson<{
+                cast?: Array<{ id: number; name: string; profile_path: string | null }>
+                crew?: Array<{
+                    id: number
+                    name: string
+                    job?: string
+                    profile_path: string | null
+                }>
+            }>(`/${log.media_type}/${log.tmdb_id}/credits`)
+                .then((data) => {
+                    for (const d of (data.crew ?? []).filter((c) => c.job === 'Director').slice(0, 1)) {
+                        upsertCandidate(
+                            {
+                                id: d.id,
+                                name: d.name,
+                                role: 'Director',
+                                profile_path: d.profile_path,
+                                known_for: log.title,
+                            },
+                            4.0,
+                            `Directed ${log.title}`
+                        )
+                    }
+                    for (const a of (data.cast ?? []).slice(0, 4)) {
+                        upsertCandidate(
+                            {
+                                id: a.id,
+                                name: a.name,
+                                role: 'Actor',
+                                profile_path: a.profile_path,
+                                known_for: log.title,
+                            },
+                            3.0,
+                            `Starred in ${log.title}`
+                        )
+                    }
+                })
+                .catch(() => {})
+        )
+    }
+
+    // 3. Mainstream cast & directors from your favorite genres (e.g., Superheroes, Sci-Fi, Thrillers)
+    const genreIds = (profile?.interests ?? [])
+        .flatMap((interest) => INTEREST_TO_GENRE_IDS[interest] ?? [])
+        .slice(0, 3)
+
+    const discoverEndpoint =
+        genreIds.length > 0
+            ? `/discover/movie?with_genres=${encodeURIComponent(
+                genreIds.join('|')
+            )}&sort_by=popularity.desc&vote_count.gte=1500&page=1`
+            : `/discover/movie?sort_by=popularity.desc&vote_count.gte=2500&page=1`
+
+    tasks.push(
+        tmdbFetchJson<{ results?: Array<{ id: number; title?: string }> }>(discoverEndpoint)
+            .then(async (data) => {
+                const topMovies = (data.results ?? []).slice(0, 3)
+                for (const movie of topMovies) {
+                    const mTitle = movie.title || 'Popular Hit'
+                    const credits = await tmdbFetchJson<{
+                        cast?: Array<{ id: number; name: string; profile_path: string | null }>
+                        crew?: Array<{
+                            id: number
+                            name: string
+                            job?: string
+                            profile_path: string | null
+                        }>
+                    }>(`/movie/${movie.id}/credits`)
+
+                    for (const d of (credits.crew ?? []).filter((c) => c.job === 'Director').slice(0, 1)) {
+                        upsertCandidate(
+                            {
+                                id: d.id,
+                                name: d.name,
+                                role: 'Director',
+                                profile_path: d.profile_path,
+                                known_for: mTitle,
+                            },
+                            2.5,
+                            `Known for ${mTitle}`
+                        )
+                    }
+                    for (const a of (credits.cast ?? []).slice(0, 3)) {
+                        upsertCandidate(
+                            {
+                                id: a.id,
+                                name: a.name,
+                                role: 'Actor',
+                                profile_path: a.profile_path,
+                                known_for: mTitle,
+                            },
+                            2.0,
+                            `Known for ${mTitle}`
+                        )
+                    }
+                }
+            })
+            .catch(() => {})
+    )
+
+    await Promise.all(tasks)
+
+    return Array.from(personMap.values())
+        .sort((a, b) => {
+            const aFollowed = followedSet.has(a.id) ? 1 : 0
+            const bFollowed = followedSet.has(b.id) ? 1 : 0
+            if (aFollowed !== bFollowed) return aFollowed - bFollowed
+            return b.score - a.score
+        })
+        .slice(0, 8)
 }

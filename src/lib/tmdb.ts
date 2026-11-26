@@ -211,3 +211,29 @@ export async function getSimilarRecommendations(
         .filter((r) => (r.media_type === 'movie' || r.media_type === 'tv') && r.poster_path)
         .slice(0, 8)
 }
+
+export async function getTrendingPeople(page = 1): Promise<TMDBPersonSearchResult[]> {
+    const data = await tmdbFetch<{
+        results?: Array<{
+            id: number
+            name: string
+            known_for_department?: string
+            profile_path: string | null
+            known_for?: Array<{ title?: string; name?: string }>
+        }>
+    }>(`/trending/person/week?page=${page}`)
+
+    return (data.results ?? [])
+        .filter((p) => p.known_for_department === 'Acting' || p.known_for_department === 'Directing')
+        .slice(0, 8)
+        .map((p) => ({
+            id: p.id,
+            name: p.name,
+            role: p.known_for_department === 'Directing' ? 'Director' : 'Actor',
+            profile_path: p.profile_path,
+            known_for_titles: (p.known_for ?? [])
+                .map((k) => k.title || k.name || '')
+                .filter(Boolean)
+                .slice(0, 3),
+        }))
+}

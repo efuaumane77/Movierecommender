@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import {
     getTrending,
+    getTrendingPeople,
     searchMulti,
     searchPeople,
     getPersonFilmography,
@@ -82,6 +83,7 @@ export function SearchPage({
 
     // Default Explore / Trending state when search bar is empty
     const [trendingMedia, setTrendingMedia] = useState<TMDBSearchResult[]>([])
+    const [trendingPeople, setTrendingPeople] = useState<TMDBPersonSearchResult[]>([])
     const [discoverUsers, setDiscoverUsers] = useState<Profile[]>([])
     const [recentReviews, setRecentReviews] = useState<ReviewSearchHit[]>([])
 
@@ -108,13 +110,14 @@ export function SearchPage({
             })
     }, [user])
 
-    // Load Trending Media, Users, and Recent Reviews on mount
+    // Load Trending Media, Trending People, Users, and Recent Reviews on mount
     useEffect(() => {
         let cancelled = false
         setLoadingExplore(true)
 
         Promise.all([
             getTrending(),
+            getTrendingPeople(),
             supabase
                 .from('profiles')
                 .select('*')
@@ -134,65 +137,74 @@ export function SearchPage({
                 .order('created_at', { ascending: false })
                 .limit(8),
         ])
-            .then(([trendingHits, { data: usersData }, { data: logsData }, { data: commentsData }]) => {
-                if (cancelled) return
+            .then(
+                ([
+                     trendingHits,
+                     trendingCastHits,
+                     { data: usersData },
+                     { data: logsData },
+                     { data: commentsData },
+                 ]) => {
+                    if (cancelled) return
 
-                const topTrending = trendingHits.slice(0, 8)
-                setTrendingMedia(topTrending)
-                setDiscoverUsers((usersData as Profile[]) ?? [])
+                    const topTrending = trendingHits.slice(0, 8)
+                    setTrendingMedia(topTrending)
+                    setTrendingPeople(trendingCastHits.slice(0, 6))
+                    setDiscoverUsers((usersData as Profile[]) ?? [])
 
-                const titleByTmdb = new Map<string, { title: string; poster_path: string | null }>()
-                for (const m of topTrending) {
-                    titleByTmdb.set(`${m.media_type}-${m.id}`, {
-                        title: m.title || m.name || 'Untitled',
-                        poster_path: m.poster_path,
-                    })
-                }
-
-                const merged: ReviewSearchHit[] = []
-
-                if (logsData) {
-                    for (const log of logsData as MediaLog[]) {
-                        if (!log.review_text?.trim()) continue
-                        merged.push({
-                            id: `log-${log.id}`,
-                            source: 'log',
-                            user_id: log.user_id,
-                            username: log.profiles?.username ?? 'user',
-                            tmdb_id: log.tmdb_id,
-                            media_type: log.media_type,
-                            title: log.title,
-                            poster_path: log.poster_path,
-                            rating: log.rating,
-                            text: log.review_text,
-                            created_at: log.updated_at,
+                    const titleByTmdb = new Map<string, { title: string; poster_path: string | null }>()
+                    for (const m of topTrending) {
+                        titleByTmdb.set(`${m.media_type}-${m.id}`, {
+                            title: m.title || m.name || 'Untitled',
+                            poster_path: m.poster_path,
                         })
                     }
-                }
 
-                if (commentsData) {
-                    for (const comment of commentsData as TrailerComment[]) {
-                        const meta = titleByTmdb.get(`${comment.media_type}-${comment.tmdb_id}`)
-                        merged.push({
-                            id: `trailer-${comment.id}`,
-                            source: 'trailer',
-                            user_id: comment.user_id,
-                            username: comment.profiles?.username ?? 'user',
-                            tmdb_id: comment.tmdb_id,
-                            media_type: comment.media_type,
-                            title:
-                                meta?.title ?? `${comment.media_type === 'tv' ? 'TV' : 'Movie'} #${comment.tmdb_id}`,
-                            poster_path: meta?.poster_path ?? null,
-                            rating: comment.rating,
-                            text: comment.comment_text,
-                            created_at: comment.created_at,
-                        })
+                    const merged: ReviewSearchHit[] = []
+
+                    if (logsData) {
+                        for (const log of logsData as MediaLog[]) {
+                            if (!log.review_text?.trim()) continue
+                            merged.push({
+                                id: `log-${log.id}`,
+                                source: 'log',
+                                user_id: log.user_id,
+                                username: log.profiles?.username ?? 'user',
+                                tmdb_id: log.tmdb_id,
+                                media_type: log.media_type,
+                                title: log.title,
+                                poster_path: log.poster_path,
+                                rating: log.rating,
+                                text: log.review_text,
+                                created_at: log.updated_at,
+                            })
+                        }
                     }
-                }
 
-                merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-                setRecentReviews(merged.slice(0, 8))
-            })
+                    if (commentsData) {
+                        for (const comment of commentsData as TrailerComment[]) {
+                            const meta = titleByTmdb.get(`${comment.media_type}-${comment.tmdb_id}`)
+                            merged.push({
+                                id: `trailer-${comment.id}`,
+                                source: 'trailer',
+                                user_id: comment.user_id,
+                                username: comment.profiles?.username ?? 'user',
+                                tmdb_id: comment.tmdb_id,
+                                media_type: comment.media_type,
+                                title:
+                                    meta?.title ?? `${comment.media_type === 'tv' ? 'TV' : 'Movie'} #${comment.tmdb_id}`,
+                                poster_path: meta?.poster_path ?? null,
+                                rating: comment.rating,
+                                text: comment.comment_text,
+                                created_at: comment.created_at,
+                            })
+                        }
+                    }
+
+                    merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                    setRecentReviews(merged.slice(0, 8))
+                }
+            )
             .catch(console.error)
             .finally(() => {
                 if (!cancelled) setLoadingExplore(false)
@@ -383,6 +395,7 @@ export function SearchPage({
 
     const isSearching = query.trim().length > 0
     const displayedMedia = isSearching ? mediaResults : trendingMedia
+    const displayedPeople = isSearching ? peopleResults : trendingPeople
     const displayedUsers = isSearching ? userResults : discoverUsers
     const displayedReviews = isSearching ? reviewResults : recentReviews
 
@@ -392,20 +405,18 @@ export function SearchPage({
             label: 'All',
             count:
                 displayedMedia.length +
-                (isSearching ? peopleResults.length : 0) +
+                displayedPeople.length +
                 displayedUsers.length +
                 displayedReviews.length,
         },
         { key: 'media', label: 'Media', count: displayedMedia.length },
-        ...(isSearching
-            ? [{ key: 'people' as SearchTab, label: 'Cast & Crew', count: peopleResults.length }]
-            : []),
+        { key: 'people', label: 'Cast & Crew', count: displayedPeople.length },
         { key: 'users', label: 'Users', count: displayedUsers.length },
         { key: 'reviews', label: 'Reviews', count: displayedReviews.length },
     ]
 
     const showMedia = activeTab === 'all' || activeTab === 'media'
-    const showPeople = isSearching && (activeTab === 'all' || activeTab === 'people')
+    const showPeople = activeTab === 'all' || activeTab === 'people'
     const showUsers = activeTab === 'all' || activeTab === 'users'
     const showReviews = activeTab === 'all' || activeTab === 'reviews'
 
@@ -478,157 +489,6 @@ export function SearchPage({
                 <p className="text-xs text-zinc-400 py-4">Loading trending movies, people, and reviews...</p>
             ) : (
                 <div className="space-y-6">
-                    {/* Actors & Directors Section (when searching) */}
-                    {showPeople && peopleResults.length > 0 && (
-                        <section className="space-y-2.5">
-                            <div className="flex items-center justify-between">
-                                <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-                                    <Users className="w-3.5 h-3.5 text-[#FF6B4A]" /> Actors &amp; Directors ({peopleResults.length})
-                                </h2>
-                                <span className="text-[11px] text-zinc-500">
-                                    Tap a person to browse their filmography
-                                </span>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                                {peopleResults.map((person) => {
-                                    const isFollowing = followedPersonIds.has(person.id)
-                                    const isInspected = inspectedPerson?.id === person.id
-
-                                    return (
-                                        <div
-                                            key={person.id}
-                                            onClick={() => handleOpenPersonFilmography(person)}
-                                            className={`border rounded-2xl p-3 flex items-center justify-between gap-2.5 transition cursor-pointer ${
-                                                isInspected
-                                                    ? 'bg-[#22222C] border-[#FF6B4A]'
-                                                    : 'bg-[#18181F] hover:bg-[#1E1E27] border-white/10'
-                                            }`}
-                                        >
-                                            <div className="flex items-center gap-2.5 min-w-0">
-                                                {person.profile_path ? (
-                                                    <img
-                                                        src={posterUrl(person.profile_path, 'w185')}
-                                                        alt={person.name}
-                                                        className="w-10 h-10 rounded-full object-cover shrink-0 border border-white/10"
-                                                    />
-                                                ) : (
-                                                    <div className="w-10 h-10 rounded-full bg-[#22222C] flex items-center justify-center text-xs font-bold text-[#FF9F43] shrink-0">
-                                                        {person.name[0]}
-                                                    </div>
-                                                )}
-
-                                                <div className="min-w-0">
-                                                    <p className="text-xs font-bold text-white truncate">
-                                                        {person.name}
-                                                    </p>
-                                                    <p className="text-[11px] text-zinc-400 truncate">
-                                                        {person.role}
-                                                        {person.known_for_titles.length > 0
-                                                            ? ` • ${person.known_for_titles.join(', ')}`
-                                                            : ''}
-                                                    </p>
-                                                </div>
-                                            </div>
-
-                                            {user && (
-                                                <button
-                                                    type="button"
-                                                    disabled={togglingPersonId === person.id}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation()
-                                                        void handleToggleFollowPerson(person)
-                                                    }}
-                                                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer shrink-0 ${
-                                                        isFollowing
-                                                            ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                                                            : 'bg-[#FF6B4A] hover:bg-[#FF9F43] text-white'
-                                                    }`}
-                                                >
-                                                    {isFollowing ? (
-                                                        <>
-                                                            <UserCheck className="w-3 h-3" /> Following
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <UserPlus className="w-3 h-3" /> Follow
-                                                        </>
-                                                    )}
-                                                </button>
-                                            )}
-                                        </div>
-                                    )
-                                })}
-                            </div>
-
-                            {inspectedPerson && (
-                                <div className="bg-[#18181F] border border-white/15 rounded-2xl p-4 space-y-2.5">
-                                    <div className="flex items-center justify-between gap-2">
-                                        <div>
-                                            <p className="text-xs font-bold text-white">
-                                                {inspectedPerson.name} ({inspectedPerson.role})
-                                            </p>
-                                            <p className="text-[11px] text-zinc-400">
-                                                Tap any title to log or watch trailer
-                                            </p>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setInspectedPerson(null)
-                                                setPersonWorks([])
-                                            }}
-                                            className="p-1 text-zinc-400 hover:text-white cursor-pointer"
-                                        >
-                                            <X className="w-4 h-4" />
-                                        </button>
-                                    </div>
-
-                                    {loadingPersonWorks ? (
-                                        <p className="text-xs text-zinc-400 py-2">Loading filmography...</p>
-                                    ) : personWorks.length === 0 ? (
-                                        <p className="text-xs text-zinc-500">No titles found.</p>
-                                    ) : (
-                                        <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1">
-                                            {personWorks.map((work) => {
-                                                const workTitle = work.title || work.name || 'Untitled'
-                                                return (
-                                                    <button
-                                                        key={`${work.media_type}-${work.id}`}
-                                                        type="button"
-                                                        onClick={() =>
-                                                            onOpenMedia({
-                                                                tmdb_id: work.id,
-                                                                media_type: work.media_type,
-                                                                title: workTitle,
-                                                                poster_path: work.poster_path,
-                                                                overview: work.overview,
-                                                            })
-                                                        }
-                                                        className="w-24 shrink-0 text-left group cursor-pointer"
-                                                    >
-                                                        {work.poster_path ? (
-                                                            <img
-                                                                src={posterUrl(work.poster_path, 'w185')}
-                                                                alt={workTitle}
-                                                                className="w-full aspect-[2/3] rounded-xl object-cover border border-white/10 group-hover:border-[#FF6B4A] transition"
-                                                            />
-                                                        ) : (
-                                                            <div className="w-full aspect-[2/3] rounded-xl bg-[#22222C]" />
-                                                        )}
-                                                        <p className="text-[11px] font-semibold text-zinc-200 group-hover:text-[#FF9F43] truncate mt-1">
-                                                            {workTitle}
-                                                        </p>
-                                                    </button>
-                                                )
-                                            })}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </section>
-                    )}
-
                     {/* Trending / Matched Media Section */}
                     {showMedia && (
                         <section className="space-y-2.5">
@@ -703,6 +563,171 @@ export function SearchPage({
                                             </div>
                                         )
                                     })}
+                                </div>
+                            )}
+                        </section>
+                    )}
+
+                    {/* Trending / Matched Actors & Directors Section */}
+                    {showPeople && (
+                        <section className="space-y-2.5">
+                            <div className="flex items-center justify-between">
+                                <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                                    {isSearching ? (
+                                        <>
+                                            <Users className="w-3.5 h-3.5 text-[#FF6B4A]" /> Actors &amp; Directors ({displayedPeople.length})
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Flame className="w-3.5 h-3.5 text-[#FF9F43]" /> Trending Actors &amp; Directors
+                                        </>
+                                    )}
+                                </h2>
+                                <span className="text-[11px] text-zinc-500">
+                                    Tap a person to browse their filmography
+                                </span>
+                            </div>
+
+                            {displayedPeople.length === 0 ? (
+                                <p className="text-xs text-zinc-500 bg-[#18181F] border border-white/5 rounded-xl p-3">
+                                    No actors or directors found matching &ldquo;{query}&rdquo;.
+                                </p>
+                            ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                    {displayedPeople.map((person) => {
+                                        const isFollowing = followedPersonIds.has(person.id)
+                                        const isInspected = inspectedPerson?.id === person.id
+
+                                        return (
+                                            <div
+                                                key={person.id}
+                                                onClick={() => handleOpenPersonFilmography(person)}
+                                                className={`border rounded-2xl p-3 flex items-center justify-between gap-2.5 transition cursor-pointer ${
+                                                    isInspected
+                                                        ? 'bg-[#22222C] border-[#FF6B4A]'
+                                                        : 'bg-[#18181F] hover:bg-[#1E1E27] border-white/10'
+                                                }`}
+                                            >
+                                                <div className="flex items-center gap-2.5 min-w-0">
+                                                    {person.profile_path ? (
+                                                        <img
+                                                            src={posterUrl(person.profile_path, 'w185')}
+                                                            alt={person.name}
+                                                            className="w-10 h-10 rounded-full object-cover shrink-0 border border-white/10"
+                                                        />
+                                                    ) : (
+                                                        <div className="w-10 h-10 rounded-full bg-[#22222C] flex items-center justify-center text-xs font-bold text-[#FF9F43] shrink-0">
+                                                            {person.name[0]}
+                                                        </div>
+                                                    )}
+
+                                                    <div className="min-w-0">
+                                                        <p className="text-xs font-bold text-white truncate">
+                                                            {person.name}
+                                                        </p>
+                                                        <p className="text-[11px] text-zinc-400 truncate">
+                                                            {person.role}
+                                                            {person.known_for_titles.length > 0
+                                                                ? ` • ${person.known_for_titles.join(', ')}`
+                                                                : ''}
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                {user && (
+                                                    <button
+                                                        type="button"
+                                                        disabled={togglingPersonId === person.id}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            void handleToggleFollowPerson(person)
+                                                        }}
+                                                        className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer shrink-0 ${
+                                                            isFollowing
+                                                                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                                                : 'bg-[#FF6B4A] hover:bg-[#FF9F43] text-white'
+                                                        }`}
+                                                    >
+                                                        {isFollowing ? (
+                                                            <>
+                                                                <UserCheck className="w-3 h-3" /> Following
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <UserPlus className="w-3 h-3" /> Follow
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            )}
+
+                            {inspectedPerson && (
+                                <div className="bg-[#18181F] border border-white/15 rounded-2xl p-4 space-y-2.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div>
+                                            <p className="text-xs font-bold text-white">
+                                                {inspectedPerson.name} ({inspectedPerson.role})
+                                            </p>
+                                            <p className="text-[11px] text-zinc-400">
+                                                Tap any title to log or watch trailer
+                                            </p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setInspectedPerson(null)
+                                                setPersonWorks([])
+                                            }}
+                                            className="p-1 text-zinc-400 hover:text-white cursor-pointer"
+                                        >
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                    </div>
+
+                                    {loadingPersonWorks ? (
+                                        <p className="text-xs text-zinc-400 py-2">Loading filmography...</p>
+                                    ) : personWorks.length === 0 ? (
+                                        <p className="text-xs text-zinc-500">No titles found.</p>
+                                    ) : (
+                                        <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1">
+                                            {personWorks.map((work) => {
+                                                const workTitle = work.title || work.name || 'Untitled'
+                                                return (
+                                                    <button
+                                                        key={`${work.media_type}-${work.id}`}
+                                                        type="button"
+                                                        onClick={() =>
+                                                            onOpenMedia({
+                                                                tmdb_id: work.id,
+                                                                media_type: work.media_type,
+                                                                title: workTitle,
+                                                                poster_path: work.poster_path,
+                                                                overview: work.overview,
+                                                            })
+                                                        }
+                                                        className="w-24 shrink-0 text-left group cursor-pointer"
+                                                    >
+                                                        {work.poster_path ? (
+                                                            <img
+                                                                src={posterUrl(work.poster_path, 'w185')}
+                                                                alt={workTitle}
+                                                                className="w-full aspect-[2/3] rounded-xl object-cover border border-white/10 group-hover:border-[#FF6B4A] transition"
+                                                            />
+                                                        ) : (
+                                                            <div className="w-full aspect-[2/3] rounded-xl bg-[#22222C]" />
+                                                        )}
+                                                        <p className="text-[11px] font-semibold text-zinc-200 group-hover:text-[#FF9F43] truncate mt-1">
+                                                            {workTitle}
+                                                        </p>
+                                                    </button>
+                                                )
+                                            })}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </section>

@@ -30,12 +30,12 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
     const [trailerKey, setTrailerKey] = useState<string | null>(null)
     const [showTrailer, setShowTrailer] = useState(false)
     const [saving, setSaving] = useState(false)
+    const [removingLog, setRemovingLog] = useState(false)
 
     const [providers, setProviders] = useState<WatchProvidersSummary | null>(null)
     const [lists, setLists] = useState<CustomList[]>([])
     const [selectedListId, setSelectedListId] = useState('')
     const [listStatusMsg, setListStatusMsg] = useState<string | null>(null)
-    const [pinMsg, setPinMsg] = useState<string | null>(null)
     const [pinBusy, setPinBusy] = useState(false)
 
     useEffect(() => {
@@ -49,8 +49,8 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         setTrailerKey(null)
         setProviders(null)
         setListStatusMsg(null)
-        setPinMsg(null)
         setPinBusy(false)
+        setRemovingLog(false)
 
         getTrailerKey(media.media_type, media.tmdb_id)
             .then(setTrailerKey)
@@ -113,6 +113,35 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         }
     }
 
+    async function handleRemoveFromProfile() {
+        if (!user || !media || !existingLog || removingLog) return
+        setRemovingLog(true)
+
+        const { error } = await supabase
+            .from('media_logs')
+            .delete()
+            .eq('id', existingLog.id)
+            .eq('user_id', user.id)
+
+        if (!error && isPinned) {
+            const nextPins = currentPins.filter(
+                (p) => !(p.tmdb_id === media.tmdb_id && p.media_type === media.media_type)
+            )
+            setLocalTopFavorites(nextPins)
+            await supabase
+                .from('profiles')
+                .update({ top_favorites: nextPins })
+                .eq('id', user.id)
+            await refreshProfile()
+        }
+
+        setRemovingLog(false)
+        if (!error) {
+            onSaved()
+            onClose()
+        }
+    }
+
     async function handleAddToList() {
         if (!user || !media || !selectedListId) return
         setListStatusMsg(null)
@@ -139,7 +168,6 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
     async function handlePinToTopFour() {
         if (!user || !media || pinBusy) return
         setPinBusy(true)
-        setPinMsg(null)
 
         const nextPins: FavoritePin[] = [
             {
@@ -163,17 +191,14 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         setPinBusy(false)
         if (error) {
             setLocalTopFavorites(currentPins)
-            setPinMsg(error.message)
         } else {
             await refreshProfile()
-            setPinMsg('Pinned to Top 4!')
         }
     }
 
     async function handleRemoveFromTopFour() {
         if (!user || !media || pinBusy) return
         setPinBusy(true)
-        setPinMsg(null)
 
         const nextPins: FavoritePin[] = currentPins.filter(
             (p) => !(p.tmdb_id === media.tmdb_id && p.media_type === media.media_type)
@@ -189,10 +214,8 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         setPinBusy(false)
         if (error) {
             setLocalTopFavorites(currentPins)
-            setPinMsg(error.message)
         } else {
             await refreshProfile()
-            setPinMsg('Removed from Top 4')
         }
     }
 
@@ -262,12 +285,6 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                                     <Trash2 className="w-3.5 h-3.5" />
                                     Remove from Top 4
                                 </button>
-                            )}
-
-                            {pinMsg && (
-                                <span className="text-[11px] font-semibold text-emerald-400">
-                                    {pinMsg}
-                                </span>
                             )}
                         </div>
                     </div>
@@ -413,14 +430,28 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                         </div>
                     )}
 
-                    <button
-                        type="submit"
-                        disabled={saving}
-                        className="w-full py-2.5 rounded-xl font-semibold text-sm text-white bg-gradient-to-r from-[#FF6B4A] to-[#FF9F43] hover:opacity-95 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                    >
-                        <Check className="w-4 h-4" />
-                        {saving ? 'Saving...' : 'Save to Cinerate'}
-                    </button>
+                    <div className="flex items-center gap-2.5 pt-1">
+                        {existingLog && (
+                            <button
+                                type="button"
+                                disabled={removingLog || saving}
+                                onClick={handleRemoveFromProfile}
+                                className="px-3.5 py-2.5 rounded-xl font-semibold text-xs text-red-400 hover:text-white bg-red-500/10 hover:bg-red-500/80 border border-red-500/30 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
+                            >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                {removingLog ? 'Removing...' : 'Remove'}
+                            </button>
+                        )}
+
+                        <button
+                            type="submit"
+                            disabled={saving || removingLog}
+                            className="flex-1 py-2.5 rounded-xl font-semibold text-sm text-white bg-gradient-to-r from-[#FF6B4A] to-[#FF9F43] hover:opacity-95 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                        >
+                            <Check className="w-4 h-4" />
+                            {saving ? 'Saving...' : 'Save to Cinerate'}
+                        </button>
+                    </div>
                 </form>
             </div>
         </div>

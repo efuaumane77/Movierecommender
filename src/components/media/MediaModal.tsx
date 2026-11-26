@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Star, Play, Check, Tv, ListPlus, Award, Trash2, ChevronDown } from 'lucide-react'
+import { X, Star, Play, Check, Tv, ListPlus, Award, Trash2, ChevronDown, FolderPlus } from 'lucide-react'
 import { posterUrl, getTrailerKey, getWatchProviders, type WatchProvidersSummary } from '../../lib/tmdb'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
@@ -36,6 +36,9 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
     const [lists, setLists] = useState<CustomList[]>([])
     const [selectedListId, setSelectedListId] = useState('')
     const [listStatusMsg, setListStatusMsg] = useState<string | null>(null)
+    const [creatingNewLibrary, setCreatingNewLibrary] = useState(false)
+    const [newLibraryTitle, setNewLibraryTitle] = useState('')
+    const [savingLibrary, setSavingLibrary] = useState(false)
     const [pinBusy, setPinBusy] = useState(false)
 
     useEffect(() => {
@@ -49,6 +52,9 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         setTrailerKey(null)
         setProviders(null)
         setListStatusMsg(null)
+        setCreatingNewLibrary(false)
+        setNewLibraryTitle('')
+        setSavingLibrary(false)
         setPinBusy(false)
         setRemovingLog(false)
 
@@ -70,6 +76,7 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                     const rows = (data as CustomList[]) ?? []
                     setLists(rows)
                     if (rows.length > 0) setSelectedListId(rows[0].id)
+                    else setCreatingNewLibrary(true)
                 })
         }
     }, [media, existingLog, user])
@@ -142,7 +149,7 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         }
     }
 
-    async function handleAddToList() {
+    async function handleAddToLibrary() {
         if (!user || !media || !selectedListId) return
         setListStatusMsg(null)
 
@@ -161,7 +168,54 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         if (error) {
             setListStatusMsg(error.message)
         } else {
-            setListStatusMsg('Added to list!')
+            setListStatusMsg('Added to library!')
+        }
+    }
+
+    async function handleCreateLibraryAndAdd() {
+        if (!user || !media || !newLibraryTitle.trim() || savingLibrary) return
+        setSavingLibrary(true)
+        setListStatusMsg(null)
+
+        const { data: createdList, error: listError } = await supabase
+            .from('custom_lists')
+            .insert({
+                owner_id: user.id,
+                title: newLibraryTitle.trim(),
+                is_collaborative: true,
+            })
+            .select('*')
+            .single()
+
+        if (listError || !createdList) {
+            setSavingLibrary(false)
+            setListStatusMsg(listError?.message ?? 'Could not create library')
+            return
+        }
+
+        const typedList = createdList as CustomList
+        const { error: itemError } = await supabase.from('custom_list_items').upsert(
+            {
+                list_id: typedList.id,
+                added_by: user.id,
+                tmdb_id: media.tmdb_id,
+                media_type: media.media_type,
+                title: media.title,
+                poster_path: media.poster_path,
+            },
+            { onConflict: 'list_id,tmdb_id,media_type' }
+        )
+
+        setSavingLibrary(false)
+        setLists((prev) => [typedList, ...prev])
+        setSelectedListId(typedList.id)
+        setNewLibraryTitle('')
+        setCreatingNewLibrary(false)
+
+        if (itemError) {
+            setListStatusMsg(itemError.message)
+        } else {
+            setListStatusMsg(`Created & added to ${typedList.title}!`)
         }
     }
 
@@ -406,30 +460,72 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                         />
                     </div>
 
-                    {user && lists.length > 0 && (
-                        <div className="pt-2 border-t border-white/10 flex items-center gap-2">
-                            <div className="relative flex-1 min-w-0">
-                                <select
-                                    value={selectedListId}
-                                    onChange={(e) => setSelectedListId(e.target.value)}
-                                    className="w-full appearance-none bg-[#22222C] border border-white/10 rounded-xl pl-3 pr-8 py-2 text-xs text-white focus:outline-none focus:border-[#FF6B4A]"
+                    {user && (
+                        <div className="pt-2 border-t border-white/10 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs text-zinc-400">Library</span>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setListStatusMsg(null)
+                                        setCreatingNewLibrary((v) => !v)
+                                    }}
+                                    className="text-[11px] font-semibold text-[#FF9F43] hover:text-[#FF6B4A] inline-flex items-center gap-1 cursor-pointer"
                                 >
-                                    {lists.map((l) => (
-                                        <option key={l.id} value={l.id}>
-                                            {l.title} {l.is_collaborative ? '(Shared)' : ''}
-                                        </option>
-                                    ))}
-                                </select>
-                                <ChevronDown className="w-3.5 h-3.5 text-zinc-400 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
+                                    <FolderPlus className="w-3 h-3" />
+                                    {creatingNewLibrary ? 'Select Existing' : '+ New Library'}
+                                </button>
                             </div>
-                            <button
-                                type="button"
-                                onClick={handleAddToList}
-                                className="px-3 py-2 rounded-xl bg-[#22222C] hover:bg-[#2C2C38] border border-white/15 text-xs font-semibold text-[#FF9F43] flex items-center gap-1 cursor-pointer shrink-0"
-                            >
-                                <ListPlus className="w-3.5 h-3.5" />
-                                {listStatusMsg ?? 'Add to List'}
-                            </button>
+
+                            {creatingNewLibrary || lists.length === 0 ? (
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="New library name..."
+                                        value={newLibraryTitle}
+                                        onChange={(e) => setNewLibraryTitle(e.target.value)}
+                                        className="flex-1 min-w-0 bg-[#22222C] border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-zinc-500 focus:outline-none focus:border-[#FF6B4A]"
+                                    />
+                                    <button
+                                        type="button"
+                                        disabled={savingLibrary || !newLibraryTitle.trim()}
+                                        onClick={handleCreateLibraryAndAdd}
+                                        className="px-3 py-2 rounded-xl bg-[#22222C] hover:bg-[#2C2C38] border border-white/15 text-xs font-semibold text-[#FF9F43] flex items-center gap-1 cursor-pointer disabled:opacity-40 shrink-0"
+                                    >
+                                        <ListPlus className="w-3.5 h-3.5" />
+                                        {savingLibrary ? 'Creating...' : 'Create & Add'}
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="flex items-center gap-2">
+                                    <div className="relative flex-1 min-w-0">
+                                        <select
+                                            value={selectedListId}
+                                            onChange={(e) => setSelectedListId(e.target.value)}
+                                            className="w-full appearance-none bg-[#22222C] border border-white/10 rounded-xl pl-3 pr-8 py-2 text-xs text-white focus:outline-none focus:border-[#FF6B4A]"
+                                        >
+                                            {lists.map((l) => (
+                                                <option key={l.id} value={l.id}>
+                                                    {l.title} {l.is_collaborative ? '(Shared)' : ''}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown className="w-3.5 h-3.5 text-zinc-400 pointer-events-none right-2.5 top-1/2 -translate-y-1/2 absolute" />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleAddToLibrary}
+                                        className="px-3 py-2 rounded-xl bg-[#22222C] hover:bg-[#2C2C38] border border-white/15 text-xs font-semibold text-[#FF9F43] flex items-center gap-1 cursor-pointer shrink-0"
+                                    >
+                                        <ListPlus className="w-3.5 h-3.5" />
+                                        {listStatusMsg ?? 'Add to Library'}
+                                    </button>
+                                </div>
+                            )}
+
+                            {listStatusMsg && !creatingNewLibrary && lists.length > 0 && (
+                                <p className="text-[11px] text-emerald-400">{listStatusMsg}</p>
+                            )}
                         </div>
                     )}
 

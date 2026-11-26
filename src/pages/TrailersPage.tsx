@@ -196,6 +196,9 @@ function ReelCard({
     const [currentTime, setCurrentTime] = useState(0)
     const [duration, setDuration] = useState(0)
 
+    const latestPlaybackRef = useRef({ currentTime: 0, duration: 0 })
+    latestPlaybackRef.current = { currentTime, duration }
+
     const [liked, setLiked] = useState(false)
     const [likeCount, setLikeCount] = useState(0)
 
@@ -317,6 +320,23 @@ function ReelCard({
 
         return () => {
             cancelled = true
+            const { currentTime: watchedSec, duration: totalSec } = latestPlaybackRef.current
+            if (user && trailerKey && watchedSec > 0.5) {
+                const rate = totalSec > 0 ? Math.min(1, watchedSec / totalSec) : 0
+                void supabase.from('trailer_views').upsert(
+                    {
+                        user_id: user.id,
+                        tmdb_id: item.id,
+                        media_type: item.media_type,
+                        watch_seconds: Number(watchedSec.toFixed(1)),
+                        duration_seconds: Number(totalSec.toFixed(1)),
+                        completion_rate: Number(rate.toFixed(3)),
+                        updated_at: new Date().toISOString(),
+                    },
+                    { onConflict: 'user_id,tmdb_id,media_type' }
+                )
+            }
+
             if (playerRef.current) {
                 try {
                     playerRef.current.destroy()
@@ -329,7 +349,7 @@ function ReelCard({
                 playerHostRef.current.innerHTML = ''
             }
         }
-    }, [isActive, trailerKey])
+    }, [isActive, trailerKey, user, item.id, item.media_type])
 
     useEffect(() => {
         const p = playerRef.current

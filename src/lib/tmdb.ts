@@ -31,6 +31,19 @@ export interface TMDBSearchResult {
     vote_average: number
 }
 
+export interface WatchProviderItem {
+    provider_id: number
+    provider_name: string
+    logo_path: string
+}
+
+export interface WatchProvidersSummary {
+    flatrate: WatchProviderItem[]
+    rent: WatchProviderItem[]
+    buy: WatchProviderItem[]
+    link?: string
+}
+
 export async function searchMulti(query: string): Promise<TMDBSearchResult[]> {
     if (!query.trim()) return []
     const data = await tmdbFetch<{ results: TMDBSearchResult[] }>(
@@ -56,4 +69,30 @@ export async function getTrailerKey(mediaType: 'movie' | 'tv', id: number): Prom
         data.results.find((v) => v.site === 'YouTube' && v.type === 'Trailer') ||
         data.results.find((v) => v.site === 'YouTube')
     return trailer ? trailer.key : null
+}
+
+export async function getWatchProviders(
+    mediaType: 'movie' | 'tv',
+    id: number,
+    region = 'CA'
+): Promise<WatchProvidersSummary> {
+    const data = await tmdbFetch<{
+        results?: Record<
+            string,
+            {
+                link?: string
+                flatrate?: WatchProviderItem[]
+                rent?: WatchProviderItem[]
+                buy?: WatchProviderItem[]
+            }
+        >
+    }>(`/${mediaType}/${id}/watch/providers`)
+
+    const regionBlock = data.results?.[region] ?? data.results?.US
+    return {
+        flatrate: (regionBlock?.flatrate ?? []).slice(0, 6),
+        rent: (regionBlock?.rent ?? []).slice(0, 4),
+        buy: (regionBlock?.buy ?? []).slice(0, 4),
+        link: regionBlock?.link,
+    }
 }

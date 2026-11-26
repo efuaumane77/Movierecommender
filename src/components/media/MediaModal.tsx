@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
-import { X, Star, Play, Check } from 'lucide-react'
-import { posterUrl, getTrailerKey } from '../../lib/tmdb'
+import { X, Star, Play, Check, Tv, ListPlus, Award } from 'lucide-react'
+import { posterUrl, getTrailerKey, getWatchProviders, type WatchProvidersSummary } from '../../lib/tmdb'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import type { MediaLog, MediaStatus } from '../../types/database'
+import type { CustomList, FavoritePin, MediaLog, MediaStatus } from '../../types/database'
 
 export interface SelectedMedia {
     tmdb_id: number
@@ -21,7 +21,7 @@ interface MediaModalProps {
 }
 
 export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalProps) {
-    const { user } = useAuth()
+    const { user, profile } = useAuth()
     const [status, setStatus] = useState<MediaStatus>('watchlist')
     const [rating, setRating] = useState<number>(0)
     const [reviewText, setReviewText] = useState('')
@@ -30,6 +30,12 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
     const [trailerKey, setTrailerKey] = useState<string | null>(null)
     const [showTrailer, setShowTrailer] = useState(false)
     const [saving, setSaving] = useState(false)
+
+    const [providers, setProviders] = useState<WatchProvidersSummary | null>(null)
+    const [lists, setLists] = useState<CustomList[]>([])
+    const [selectedListId, setSelectedListId] = useState('')
+    const [listStatusMsg, setListStatusMsg] = useState<string | null>(null)
+    const [pinMsg, setPinMsg] = useState<string | null>(null)
 
     useEffect(() => {
         if (!media) return
@@ -40,11 +46,31 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         setEpisode(existingLog?.episode ?? 1)
         setShowTrailer(false)
         setTrailerKey(null)
+        setProviders(null)
+        setListStatusMsg(null)
+        setPinMsg(null)
 
         getTrailerKey(media.media_type, media.tmdb_id)
             .then(setTrailerKey)
             .catch(() => setTrailerKey(null))
-    }, [media, existingLog])
+
+        getWatchProviders(media.media_type, media.tmdb_id, 'CA')
+            .then(setProviders)
+            .catch(() => setProviders(null))
+
+        if (user) {
+            supabase
+                .from('custom_lists')
+                .select('*')
+                .or(`owner_id.eq.${user.id},is_collaborative.eq.true`)
+                .order('created_at', { ascending: false })
+                .then(({ data }) => {
+                    const rows = (data as CustomList[]) ?? []
+                    setLists(rows)
+                    if (rows.length > 0) setSelectedListId(rows[0].id)
+                })
+        }
+    }, [media, existingLog, user])
 
     if (!media) return null
 
@@ -77,9 +103,66 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         }
     }
 
+    async function handleAddToList() {
+        if (!user || !media || !selectedListId) return
+        setListStatusMsg(null)
+
+        const { error } = await supabase.from('custom_list_items').upsert(
+            {
+                list_id: selectedListId,
+                added_by: user.id,
+                tmdb_id: media.tmdb_id,
+                media_type: media.media_type,
+                title: media.title,
+                poster_path: media.poster_path,
+            },
+            { onConflict: 'list_id,tmdb_id,media_type' }
+        )
+
+        if (error) {
+            setListStatusMsg(error.message)
+        } else {
+            setListStatusMsg('Added to list!')
+            onSaved()
+        }
+    }
+
+    async function handlePinToTopFour() {
+        if (!user || !media) return
+        setPinMsg(null)
+
+        const currentPins: FavoritePin[] = Array.isArray(profile?.top_favorites)
+            ? [...profile.top_favorites]
+            : []
+        const filtered = currentPins.filter(
+            (p) => !(p.tmdb_id === media.tmdb_id && p.media_type === media.media_type)
+        )
+        const nextPins: FavoritePin[] = [
+            {
+                tmdb_id: media.tmdb_id,
+                media_type: media.media_type,
+                title: media.title,
+                poster_path: media.poster_path,
+            },
+            ...filtered,
+        ].slice(0, 4)
+
+        const { error } = await supabase
+            .from('profiles')
+            .update({ top_favorites: nextPins })
+            .eq('id', user.id)
+
+        if (error) {
+            setPinMsg(error.message)
+        } else {
+            setPinMsg('Pinned to Top 4!')
+            onSaved()
+        }
+    }
+
     return (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="w-full max-w-lg bg-[#18181F] border border-white/15 rounded-2xl overflow-hidden shadow-2xl">
+            <div className="w-full max-w-lg max-h-[90dvh] overflow-y-auto bg-[#18181F] border border-white/15 rounded-2xl shadow-2xl">
                 {/* Header */}
                 <div className="flex items-start gap-4 p-5 border-b border-white/10">
                     {media.poster_path ? (
@@ -106,18 +189,56 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                             <p className="text-xs text-zinc-400 mt-2 line-clamp-2">{media.overview}</p>
                         )}
 
-                        {trailerKey && (
-                            <button
-                                type="button"
-                                onClick={() => setShowTrailer(!showTrailer)}
-                                className="mt-2.5 inline-flex items-center gap-1.5 text-xs font-semibold text-[#FF6B4A] hover:text-[#FF9F43] cursor-pointer"
-                            >
-                                <Play className="w-3.5 h-3.5 fill-current" />
-                                {showTrailer ? 'Hide Trailer' : 'Watch Trailer'}
-                            </button>
-                        )}
+                        <div className="mt-2.5 flex items-center gap-3 flex-wrap">
+                            {trailerKey && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowTrailer(!showTrailer)}
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#FF6B4A] hover:text-[#FF9F43] cursor-pointer"
+                                >
+                                    <Play className="w-3.5 h-3.5 fill-current" />
+                                    {showTrailer ? 'Hide Trailer' : 'Watch Trailer'}
+                                </button>
+                            )}
+
+                            {user && (
+                                <button
+                                    type="button"
+                                    onClick={handlePinToTopFour}
+                                    className="inline-flex items-center gap-1 text-xs font-semibold text-amber-400 hover:text-amber-300 cursor-pointer"
+                                >
+                                    <Award className="w-3.5 h-3.5" />
+                                    {pinMsg ?? 'Pin to Top 4'}
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
+
+                {/* Where to Watch Strip */}
+                {providers && providers.flatrate.length > 0 && (
+                    <div className="px-5 py-2.5 bg-[#14141A] border-b border-white/10 flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-[11px] font-semibold text-zinc-400 flex items-center gap-1.5">
+                            <Tv className="w-3.5 h-3.5 text-[#FF9F43]" /> Stream on:
+                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                            {providers.flatrate.map((p) => (
+                                <span
+                                    key={p.provider_id}
+                                    title={p.provider_name}
+                                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-[#22222C] border border-white/10 text-[10px] font-semibold text-zinc-200"
+                                >
+                                    <img
+                                        src={`https://image.tmdb.org/t/p/w45${p.logo_path}`}
+                                        alt={p.provider_name}
+                                        className="w-3.5 h-3.5 rounded-xs object-cover"
+                                    />
+                                    {p.provider_name}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* Embedded Trailer */}
                 {showTrailer && trailerKey && (
@@ -134,7 +255,6 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
 
                 {/* Log Form */}
                 <form onSubmit={handleSave} className="p-5 space-y-4">
-                    {/* Status Selector */}
                     <div>
                         <label className="block text-xs text-zinc-400 mb-1.5">Shelf Status</label>
                         <div className="grid grid-cols-3 gap-2">
@@ -155,7 +275,6 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                         </div>
                     </div>
 
-                    {/* Season & Episode Progress (TV Shows) */}
                     {media.media_type === 'tv' && (
                         <div className="grid grid-cols-2 gap-3">
                             <div>
@@ -181,7 +300,6 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                         </div>
                     )}
 
-                    {/* Star Rating (1-5) */}
                     <div>
                         <label className="block text-xs text-zinc-400 mb-1.5">Your Rating</label>
                         <div className="flex items-center gap-1.5">
@@ -203,7 +321,6 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                         </div>
                     </div>
 
-                    {/* Review / Reaction Note */}
                     <div>
                         <label className="block text-xs text-zinc-400 mb-1">
                             Thoughts / Reaction {media.media_type === 'tv' && '(Auto-blurred for friends behind your episode)'}
@@ -216,6 +333,30 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                             className="w-full bg-[#22222C] border border-white/10 rounded-xl p-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-[#FF6B4A]"
                         />
                     </div>
+
+                    {user && lists.length > 0 && (
+                        <div className="pt-2 border-t border-white/10 flex items-center gap-2">
+                            <select
+                                value={selectedListId}
+                                onChange={(e) => setSelectedListId(e.target.value)}
+                                className="flex-1 min-w-0 bg-[#22222C] border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                            >
+                                {lists.map((l) => (
+                                    <option key={l.id} value={l.id}>
+                                        {l.title} {l.is_collaborative ? '(Shared)' : ''}
+                                    </option>
+                                ))}
+                            </select>
+                            <button
+                                type="button"
+                                onClick={handleAddToList}
+                                className="px-3 py-2 rounded-xl bg-[#22222C] hover:bg-[#2C2C38] border border-white/15 text-xs font-semibold text-[#FF9F43] flex items-center gap-1 cursor-pointer shrink-0"
+                            >
+                                <ListPlus className="w-3.5 h-3.5" />
+                                {listStatusMsg ?? 'Add to List'}
+                            </button>
+                        </div>
+                    )}
 
                     <button
                         type="submit"

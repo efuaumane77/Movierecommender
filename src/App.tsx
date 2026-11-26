@@ -56,7 +56,7 @@ function CinerateWorkspace() {
             supabase
                 .from('media_logs')
                 .select(
-                    '*, profiles(id, username, display_name, pronouns, bio, interests, watched_visibility, avatar_url, created_at)'
+                    '*, profiles(id, username, display_name, pronouns, bio, interests, watched_visibility, top_favorites, avatar_url, created_at)'
                 )
                 .order('updated_at', { ascending: false })
                 .limit(100),
@@ -123,16 +123,31 @@ function CinerateWorkspace() {
     }, [user])
 
     useEffect(() => {
+        if (!user) return
         let active = true
+
         Promise.resolve().then(() => {
             if (active) {
                 void refreshData()
             }
         })
+
+        const channel = supabase
+            .channel(`cinerate-realtime-${user.id}`)
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'friendships' },
+                () => {
+                    if (active) void refreshData()
+                }
+            )
+            .subscribe()
+
         return () => {
             active = false
+            void supabase.removeChannel(channel)
         }
-    }, [refreshData])
+    }, [user, refreshData])
 
     function handleJoinOrOpenForum(slug: string) {
         setJoinedForumSlugs((prev) => {

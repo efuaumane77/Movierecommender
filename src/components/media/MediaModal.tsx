@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Star, Play, Check, Tv, ListPlus, Award } from 'lucide-react'
+import { X, Star, Play, Check, Tv, ListPlus, Award, Trash2 } from 'lucide-react'
 import { posterUrl, getTrailerKey, getWatchProviders, type WatchProvidersSummary } from '../../lib/tmdb'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
@@ -21,7 +21,7 @@ interface MediaModalProps {
 }
 
 export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalProps) {
-    const { user, profile, setLocalTopFavorites } = useAuth()
+    const { user, profile, setLocalTopFavorites, refreshProfile } = useAuth()
     const [status, setStatus] = useState<MediaStatus>('watchlist')
     const [rating, setRating] = useState<number>(0)
     const [reviewText, setReviewText] = useState('')
@@ -36,6 +36,7 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
     const [selectedListId, setSelectedListId] = useState('')
     const [listStatusMsg, setListStatusMsg] = useState<string | null>(null)
     const [pinMsg, setPinMsg] = useState<string | null>(null)
+    const [pinBusy, setPinBusy] = useState(false)
 
     useEffect(() => {
         if (!media) return
@@ -49,6 +50,7 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         setProviders(null)
         setListStatusMsg(null)
         setPinMsg(null)
+        setPinBusy(false)
 
         getTrailerKey(media.media_type, media.tmdb_id)
             .then(setTrailerKey)
@@ -74,10 +76,12 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
 
     if (!media) return null
 
-    const isPinned = Boolean(
-        (profile?.top_favorites ?? []).some(
-            (p) => p.tmdb_id === media.tmdb_id && p.media_type === media.media_type
-        )
+    const currentPins: FavoritePin[] = Array.isArray(profile?.top_favorites)
+        ? [...profile.top_favorites]
+        : []
+
+    const isPinned = currentPins.some(
+        (p) => p.tmdb_id === media.tmdb_id && p.media_type === media.media_type
     )
 
     async function handleSave(e: React.FormEvent) {
@@ -132,43 +136,63 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         }
     }
 
-    async function handleToggleTopFour() {
-        if (!user || !media) return
+    async function handlePinToTopFour() {
+        if (!user || !media || pinBusy) return
+        setPinBusy(true)
         setPinMsg(null)
 
-        const currentPins: FavoritePin[] = Array.isArray(profile?.top_favorites)
-            ? [...profile.top_favorites]
-            : []
-
-        const nextPins: FavoritePin[] = isPinned
-            ? currentPins.filter(
+        const nextPins: FavoritePin[] = [
+            {
+                tmdb_id: media.tmdb_id,
+                media_type: media.media_type,
+                title: media.title,
+                poster_path: media.poster_path,
+            },
+            ...currentPins.filter(
                 (p) => !(p.tmdb_id === media.tmdb_id && p.media_type === media.media_type)
-            )
-            : [
-                {
-                    tmdb_id: media.tmdb_id,
-                    media_type: media.media_type,
-                    title: media.title,
-                    poster_path: media.poster_path,
-                },
-                ...currentPins.filter(
-                    (p) => !(p.tmdb_id === media.tmdb_id && p.media_type === media.media_type)
-                ),
-            ].slice(0, 4)
+            ),
+        ].slice(0, 4)
 
-        // Update UI instantaneously with zero full-page re-fetch
         setLocalTopFavorites(nextPins)
-        setPinMsg(isPinned ? 'Removed from Top 4' : 'Pinned to Top 4!')
 
         const { error } = await supabase
             .from('profiles')
             .update({ top_favorites: nextPins })
             .eq('id', user.id)
 
+        setPinBusy(false)
         if (error) {
-            // Rollback only if Supabase write failed
             setLocalTopFavorites(currentPins)
             setPinMsg(error.message)
+        } else {
+            await refreshProfile()
+            setPinMsg('Pinned to Top 4!')
+        }
+    }
+
+    async function handleRemoveFromTopFour() {
+        if (!user || !media || pinBusy) return
+        setPinBusy(true)
+        setPinMsg(null)
+
+        const nextPins: FavoritePin[] = currentPins.filter(
+            (p) => !(p.tmdb_id === media.tmdb_id && p.media_type === media.media_type)
+        )
+
+        setLocalTopFavorites(nextPins)
+
+        const { error } = await supabase
+            .from('profiles')
+            .update({ top_favorites: nextPins })
+            .eq('id', user.id)
+
+        setPinBusy(false)
+        if (error) {
+            setLocalTopFavorites(currentPins)
+            setPinMsg(error.message)
+        } else {
+            await refreshProfile()
+            setPinMsg('Removed from Top 4')
         }
     }
 
@@ -216,19 +240,34 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                                 </button>
                             )}
 
-                            {user && (
+                            {user && !isPinned && (
                                 <button
                                     type="button"
-                                    onClick={handleToggleTopFour}
-                                    className={`inline-flex items-center gap-1 text-xs font-semibold cursor-pointer ${
-                                        isPinned
-                                            ? 'text-emerald-400 hover:text-emerald-300'
-                                            : 'text-amber-400 hover:text-amber-300'
-                                    }`}
+                                    disabled={pinBusy}
+                                    onClick={handlePinToTopFour}
+                                    className="inline-flex items-center gap-1 text-xs font-semibold text-amber-400 hover:text-amber-300 cursor-pointer disabled:opacity-50"
                                 >
                                     <Award className="w-3.5 h-3.5" />
-                                    {pinMsg ?? (isPinned ? 'Pinned in Top 4' : 'Pin to Top 4')}
+                                    Pin to Top 4
                                 </button>
+                            )}
+
+                            {user && isPinned && (
+                                <button
+                                    type="button"
+                                    disabled={pinBusy}
+                                    onClick={handleRemoveFromTopFour}
+                                    className="inline-flex items-center gap-1 text-xs font-semibold text-red-400 hover:text-red-300 cursor-pointer disabled:opacity-50"
+                                >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    Remove from Top 4
+                                </button>
+                            )}
+
+                            {pinMsg && (
+                                <span className="text-[11px] font-semibold text-emerald-400">
+                                    {pinMsg}
+                                </span>
                             )}
                         </div>
                     </div>

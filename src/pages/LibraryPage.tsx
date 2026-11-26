@@ -100,6 +100,8 @@ export function LibraryPage({
             .eq('id', user.id)
         if (error) {
             setLocalTopFavorites(current)
+        } else {
+            await refreshProfile()
         }
     }
 

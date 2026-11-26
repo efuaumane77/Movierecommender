@@ -21,7 +21,7 @@ interface MediaModalProps {
 }
 
 export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalProps) {
-    const { user, profile, refreshProfile } = useAuth()
+    const { user, profile, setLocalTopFavorites } = useAuth()
     const [status, setStatus] = useState<MediaStatus>('watchlist')
     const [rating, setRating] = useState<number>(0)
     const [reviewText, setReviewText] = useState('')
@@ -129,7 +129,6 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
             setListStatusMsg(error.message)
         } else {
             setListStatusMsg('Added to list!')
-            onSaved()
         }
     }
 
@@ -157,17 +156,19 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                 ),
             ].slice(0, 4)
 
+        // Update UI instantaneously with zero full-page re-fetch
+        setLocalTopFavorites(nextPins)
+        setPinMsg(isPinned ? 'Removed from Top 4' : 'Pinned to Top 4!')
+
         const { error } = await supabase
             .from('profiles')
             .update({ top_favorites: nextPins })
             .eq('id', user.id)
 
         if (error) {
+            // Rollback only if Supabase write failed
+            setLocalTopFavorites(currentPins)
             setPinMsg(error.message)
-        } else {
-            await refreshProfile()
-            setPinMsg(isPinned ? 'Removed from Top 4' : 'Pinned to Top 4!')
-            onSaved()
         }
     }
 

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
-import type { Profile } from '../types/database'
+import type { FavoritePin, Profile } from '../types/database'
 
 interface AuthContextValue {
     user: User | null
@@ -9,6 +9,7 @@ interface AuthContextValue {
     profile: Profile | null
     loading: boolean
     refreshProfile: () => Promise<void>
+    setLocalTopFavorites: (nextPins: FavoritePin[]) => void
     signOut: () => Promise<void>
 }
 
@@ -32,6 +33,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setProfile(data as Profile)
         }
     }, [user])
+
+    const setLocalTopFavorites = useCallback((nextPins: FavoritePin[]) => {
+        setProfile((prev) => (prev ? { ...prev, top_favorites: nextPins } : prev))
+    }, [])
 
     useEffect(() => {
         let mounted = true
@@ -92,7 +97,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     return (
-        <AuthContext.Provider value={{ user, session, profile, loading, refreshProfile, signOut }}>
+        <AuthContext.Provider
+            value={{ user, session, profile, loading, refreshProfile, setLocalTopFavorites, signOut }}
+        >
             {children}
         </AuthContext.Provider>
     )

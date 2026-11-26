@@ -36,7 +36,7 @@ export function LibraryPage({
                                 onLogsUpdated,
                                 onFriendsUpdated,
                             }: LibraryPageProps) {
-    const { user, profile, refreshProfile } = useAuth()
+    const { user, profile, refreshProfile, setLocalTopFavorites } = useAuth()
     const { userId } = useParams<{ userId?: string }>()
     const navigate = useNavigate()
 
@@ -71,7 +71,7 @@ export function LibraryPage({
 
     useEffect(() => {
         void loadFavoritesAndLists()
-    }, [loadFavoritesAndLists, profile?.top_favorites, myLogs])
+    }, [loadFavoritesAndLists])
 
     useEffect(() => {
         if (!user || !isOwnProfile) return
@@ -93,9 +93,14 @@ export function LibraryPage({
         const next = current.filter(
             (p) => !(p.tmdb_id === pin.tmdb_id && p.media_type === pin.media_type)
         )
-        await supabase.from('profiles').update({ top_favorites: next }).eq('id', user.id)
-        await refreshProfile()
-        await loadFavoritesAndLists()
+        setLocalTopFavorites(next)
+        const { error } = await supabase
+            .from('profiles')
+            .update({ top_favorites: next })
+            .eq('id', user.id)
+        if (error) {
+            setLocalTopFavorites(current)
+        }
     }
 
     async function handleCreateList(e: React.FormEvent) {

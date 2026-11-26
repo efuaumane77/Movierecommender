@@ -17,21 +17,27 @@ import {
     Trash2,
     UserPlus,
     X,
+    Wand2,
+    Flame,
 } from 'lucide-react'
 import { getTrending, getTrailerKey, posterUrl, type TMDBSearchResult } from '../lib/tmdb'
+import { getPersonalizedRecommendations } from '../lib/recommendations'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import type { MediaLog, Profile, TrailerComment } from '../types/database'
 import type { SelectedMedia } from '../components/media/MediaModal'
 
-// Persists last watched trailer across tab/route switches
-let lastWatchedTrailerId: number | null = null
-const STORAGE_KEY = 'cinerate_last_trailer_id'
+type TrailerFeedMode = 'for-you' | 'trending'
 
-function readSavedTrailerId(): number | null {
-    if (lastWatchedTrailerId !== null) return lastWatchedTrailerId
+interface TrailerFeedItem extends TMDBSearchResult {
+    reason?: string
+}
+
+const STORAGE_KEY_PREFIX = 'cinerate_last_trailer_id_'
+
+function readSavedTrailerId(mode: TrailerFeedMode): number | null {
     try {
-        const raw = sessionStorage.getItem(STORAGE_KEY)
+        const raw = sessionStorage.getItem(`${STORAGE_KEY_PREFIX}${mode}`)
         if (!raw) return null
         const parsed = Number(raw)
         return Number.isFinite(parsed) ? parsed : null
@@ -40,11 +46,11 @@ function readSavedTrailerId(): number | null {
     }
 }
 
-function writeSavedTrailerId(id: number | null) {
-    lastWatchedTrailerId = id
+function writeSavedTrailerId(mode: TrailerFeedMode, id: number | null) {
     try {
-        if (id === null) sessionStorage.removeItem(STORAGE_KEY)
-        else sessionStorage.setItem(STORAGE_KEY, String(id))
+        const key = `${STORAGE_KEY_PREFIX}${mode}`
+        if (id === null) sessionStorage.removeItem(key)
+        else sessionStorage.setItem(key, String(id))
     } catch {
         // ignore storage errors
     }
@@ -142,7 +148,7 @@ interface TrailersPageProps {
 }
 
 interface ReelCardProps {
-    item: TMDBSearchResult
+    item: TrailerFeedItem
     isActive: boolean
     volume: number
     isMuted: boolean
@@ -548,6 +554,13 @@ function ReelCard({
                 ref={stageRef}
                 className="relative h-full flex-1 min-w-0 bg-[#14141A] border border-white/15 rounded-2xl overflow-hidden shadow-2xl flex flex-col justify-between"
             >
+                {item.reason && (
+                    <div className="absolute top-3 left-3 z-20 px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md border border-white/15 text-[11px] font-semibold text-[#FF9F43] flex items-center gap-1.5 pointer-events-none">
+                        <Wand2 className="w-3 h-3 text-[#FF6B4A]" />
+                        <span>{item.reason}</span>
+                    </div>
+                )}
+
                 <div className="relative flex-1 min-h-0 w-full bg-black flex items-center justify-center overflow-hidden">
                     {isActive && trailerKey ? (
                         <div
@@ -579,8 +592,8 @@ function ReelCard({
                                 )}
                                 {trailerLoaded && !trailerKey && (
                                     <span className="px-3 py-1 rounded-full bg-black/70 border border-white/10 text-xs text-zinc-200">
-                    No trailer available on TMDB
-                  </span>
+                                        No trailer available on TMDB
+                                    </span>
                                 )}
                             </div>
                         </div>
@@ -600,8 +613,8 @@ function ReelCard({
                             </button>
 
                             <span className="text-[11px] font-mono text-zinc-300 tabular-nums shrink-0">
-                {formatTime(currentTime)}
-              </span>
+                                {formatTime(currentTime)}
+                            </span>
 
                             <input
                                 type="range"
@@ -615,8 +628,8 @@ function ReelCard({
                             />
 
                             <span className="text-[11px] font-mono text-zinc-400 tabular-nums shrink-0">
-                {formatTime(duration)}
-              </span>
+                                {formatTime(duration)}
+                            </span>
 
                             <button
                                 type="button"
@@ -668,13 +681,13 @@ function ReelCard({
                                 <div className="flex items-center gap-2 flex-wrap">
                                     <h2 className="text-sm sm:text-base font-bold text-white truncate">{title}</h2>
                                     <span className="text-[11px] text-zinc-400 shrink-0">
-                    {item.media_type === 'tv' ? 'TV Series' : 'Movie'}
+                                        {item.media_type === 'tv' ? 'TV Series' : 'Movie'}
                                         {year ? ` • ${year}` : ''}
-                  </span>
+                                    </span>
                                     {avgStars && (
                                         <span className="px-2 py-0.5 rounded-lg bg-[#22222C] text-[11px] font-semibold text-[#FF9F43] shrink-0">
-                      ★ {avgStars} ({ratedComments.length})
-                    </span>
+                                            ★ {avgStars} ({ratedComments.length})
+                                        </span>
                                     )}
                                 </div>
 
@@ -705,9 +718,9 @@ function ReelCard({
                 {commentsOpen && (
                     <div className="absolute inset-x-0 bottom-0 z-30 h-[62%] bg-[#18181F]/95 backdrop-blur-md border-t border-white/15 rounded-t-2xl p-4 flex flex-col">
                         <div className="flex items-center justify-between pb-2.5 border-b border-white/10">
-              <span className="text-xs font-bold text-white">
-                Trailer Reviews ({comments.length})
-              </span>
+                            <span className="text-xs font-bold text-white">
+                                Trailer Reviews ({comments.length})
+                            </span>
                             <button
                                 type="button"
                                 onClick={() => setCommentsOpen(false)}
@@ -775,15 +788,15 @@ function ReelCard({
                                         <div key={c.id} className="bg-[#22222C]/80 border border-white/5 rounded-xl p-2.5">
                                             <div className="flex items-center justify-between gap-2">
                                                 <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="text-xs font-semibold text-white truncate">
-                            @{c.profiles?.username ?? 'user'}
-                          </span>
+                                                    <span className="text-xs font-semibold text-white truncate">
+                                                        @{c.profiles?.username ?? 'user'}
+                                                    </span>
 
                                                     {!isOwnComment && !isFollowing && (
                                                         isRequested ? (
                                                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-zinc-400">
-                                Requested
-                              </span>
+                                                                Requested
+                                                            </span>
                                                         ) : (
                                                             <button
                                                                 type="button"
@@ -947,8 +960,8 @@ function ReelCard({
                         />
                     </div>
                     <span className="text-[11px] font-semibold text-zinc-300">
-            {isSaved ? 'Saved' : 'Save'}
-          </span>
+                        {isSaved ? 'Saved' : 'Save'}
+                    </span>
                 </button>
 
                 <button
@@ -982,8 +995,9 @@ export function TrailersPage({
                                  onOpenMedia,
                                  onLogsUpdated,
                              }: TrailersPageProps) {
-    const { user } = useAuth()
-    const [trending, setTrending] = useState<TMDBSearchResult[]>([])
+    const { user, profile } = useAuth()
+    const [feedMode, setFeedMode] = useState<TrailerFeedMode>('for-you')
+    const [itemsList, setItemsList] = useState<TrailerFeedItem[]>([])
     const [activeId, setActiveId] = useState<number | null>(null)
     const [volume, setVolume] = useState(70)
     const [isMuted, setIsMuted] = useState(true)
@@ -997,29 +1011,78 @@ export function TrailersPage({
     const restoredForBatchRef = useRef(false)
     const cardEls = useRef<Record<number, HTMLElement>>({})
 
+    const buildInitialFeed = useCallback(
+        async (mode: TrailerFeedMode): Promise<TrailerFeedItem[]> => {
+            if (mode === 'trending' || !user) {
+                const trendingItems = await getTrending(1)
+                return shuffleArray(trendingItems)
+            }
+
+            const [recs, trendingItems] = await Promise.all([
+                getPersonalizedRecommendations({
+                    userId: user.id,
+                    profile,
+                    myLogs,
+                    feedLogs,
+                    friendIds,
+                }),
+                getTrending(1),
+            ])
+
+            const combined: TrailerFeedItem[] = []
+            const seen = new Set<string>()
+
+            for (const rec of recs) {
+                const key = `${rec.media_type}-${rec.id}`
+                if (seen.has(key)) continue
+                seen.add(key)
+                combined.push({
+                    id: rec.id,
+                    media_type: rec.media_type,
+                    title: rec.title,
+                    poster_path: rec.poster_path,
+                    backdrop_path: null,
+                    vote_average: 0,
+                    overview: rec.overview,
+                    release_date: rec.release_date,
+                    reason: rec.reason,
+                })
+            }
+
+            for (const tr of shuffleArray(trendingItems)) {
+                const key = `${tr.media_type}-${tr.id}`
+                if (seen.has(key)) continue
+                seen.add(key)
+                combined.push(tr)
+            }
+
+            return combined
+        },
+        [user, profile, myLogs, feedLogs, friendIds]
+    )
+
     useEffect(() => {
         let cancelled = false
         setLoading(true)
         setErrorMsg(null)
         restoredForBatchRef.current = false
 
-        getTrending(1)
+        buildInitialFeed(feedMode)
             .then((items) => {
                 if (cancelled) return
-                const shuffled = shuffleArray(items)
-                setTrending(shuffled)
+                setItemsList(items)
                 setPage(1)
                 setHasMore(items.length > 0)
 
-                const savedId = readSavedTrailerId()
-                const matched = savedId !== null ? shuffled.find((t) => t.id === savedId) : undefined
-                const initialId = matched?.id ?? shuffled[0]?.id ?? null
+                const savedId = readSavedTrailerId(feedMode)
+                const matched = savedId !== null ? items.find((t) => t.id === savedId) : undefined
+                const initialId = matched?.id ?? items[0]?.id ?? null
                 setActiveId(initialId)
-                if (initialId !== null) writeSavedTrailerId(initialId)
+                if (initialId !== null) writeSavedTrailerId(feedMode, initialId)
             })
             .catch((err) => {
                 if (cancelled) return
-                setErrorMsg(err instanceof Error ? err.message : 'Could not load trending trailers')
+                setErrorMsg(err instanceof Error ? err.message : 'Could not load trailers')
             })
             .finally(() => {
                 if (!cancelled) setLoading(false)
@@ -1028,21 +1091,22 @@ export function TrailersPage({
         return () => {
             cancelled = true
         }
-    }, [])
+    }, [feedMode, buildInitialFeed])
 
-    // Restore scroll offset to the last watched trailer once rendered
     useLayoutEffect(() => {
-        if (loading || restoredForBatchRef.current || trending.length === 0) return
+        if (loading || restoredForBatchRef.current || itemsList.length === 0) return
         const container = scrollRef.current
         if (!container) return
 
-        const savedId = readSavedTrailerId()
-        const idx = savedId !== null ? trending.findIndex((t) => t.id === savedId) : -1
+        const savedId = readSavedTrailerId(feedMode)
+        const idx = savedId !== null ? itemsList.findIndex((t) => t.id === savedId) : -1
         if (idx > 0 && container.clientHeight > 0) {
             container.scrollTop = idx * container.clientHeight
+        } else {
+            container.scrollTop = 0
         }
         restoredForBatchRef.current = true
-    }, [loading, trending])
+    }, [loading, itemsList, feedMode])
 
     const loadNextPage = useCallback(async () => {
         if (loadingMore || !hasMore) return
@@ -1053,7 +1117,7 @@ export function TrailersPage({
             if (nextItems.length === 0) {
                 setHasMore(false)
             } else {
-                setTrending((prev) => {
+                setItemsList((prev) => {
                     const seen = new Set(prev.map((p) => `${p.media_type}-${p.id}`))
                     const fresh = shuffleArray(
                         nextItems.filter((n) => !seen.has(`${n.media_type}-${n.id}`))
@@ -1074,9 +1138,21 @@ export function TrailersPage({
         setIsRefreshing(true)
         setErrorMsg(null)
 
-        // Cycle to the next TMDB page so refresh brings a fresh set of trending titles
-        const targetPage = page >= 5 ? 1 : page + 1
         try {
+            if (feedMode === 'for-you' && user) {
+                const freshFeed = await buildInitialFeed('for-you')
+                setItemsList(freshFeed)
+                setPage(1)
+                setHasMore(freshFeed.length > 0)
+
+                const firstId = freshFeed[0]?.id ?? null
+                setActiveId(firstId)
+                writeSavedTrailerId('for-you', firstId)
+                if (scrollRef.current) scrollRef.current.scrollTop = 0
+                return
+            }
+
+            const targetPage = page >= 5 ? 1 : page + 1
             let items = await getTrending(targetPage)
             if (items.length === 0) {
                 items = await getTrending(1)
@@ -1086,12 +1162,12 @@ export function TrailersPage({
             }
 
             const shuffled = shuffleArray(items)
-            setTrending(shuffled)
+            setItemsList(shuffled)
             setHasMore(items.length > 0)
 
             const firstId = shuffled[0]?.id ?? null
             setActiveId(firstId)
-            writeSavedTrailerId(firstId)
+            writeSavedTrailerId(feedMode, firstId)
 
             if (scrollRef.current) {
                 scrollRef.current.scrollTop = 0
@@ -1101,15 +1177,15 @@ export function TrailersPage({
         } finally {
             setIsRefreshing(false)
         }
-    }, [isRefreshing, page])
+    }, [isRefreshing, feedMode, user, buildInitialFeed, page])
 
     useEffect(() => {
-        if (trending.length === 0 || activeId === null) return
-        const currentIndex = trending.findIndex((t) => t.id === activeId)
-        if (currentIndex >= trending.length - 3) {
+        if (itemsList.length === 0 || activeId === null) return
+        const currentIndex = itemsList.findIndex((t) => t.id === activeId)
+        if (currentIndex >= itemsList.length - 3) {
             loadNextPage()
         }
-    }, [activeId, trending, loadNextPage])
+    }, [activeId, itemsList, loadNextPage])
 
     const registerEl = useCallback((id: number, el: HTMLElement | null) => {
         if (el) {
@@ -1121,19 +1197,19 @@ export function TrailersPage({
 
     const handleScroll = useCallback(() => {
         const container = scrollRef.current
-        if (!container || trending.length === 0) return
+        if (!container || itemsList.length === 0) return
 
         const reelHeight = container.clientHeight
         if (reelHeight <= 0) return
 
         const index = Math.round(container.scrollTop / reelHeight)
-        const clampedIndex = Math.max(0, Math.min(trending.length - 1, index))
-        const nextItem = trending[clampedIndex]
+        const clampedIndex = Math.max(0, Math.min(itemsList.length - 1, index))
+        const nextItem = itemsList[clampedIndex]
         if (nextItem && nextItem.id !== activeId) {
             setActiveId(nextItem.id)
-            writeSavedTrailerId(nextItem.id)
+            writeSavedTrailerId(feedMode, nextItem.id)
         }
-    }, [trending, activeId])
+    }, [itemsList, activeId, feedMode])
 
     useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
@@ -1149,7 +1225,7 @@ export function TrailersPage({
             }
 
             const container = scrollRef.current
-            if (!container || trending.length === 0) return
+            if (!container || itemsList.length === 0) return
             const reelHeight = container.clientHeight
             if (reelHeight <= 0) return
 
@@ -1157,18 +1233,18 @@ export function TrailersPage({
             const currentIdx = Math.round(container.scrollTop / reelHeight)
             const nextIdx =
                 e.key === 'ArrowDown'
-                    ? Math.min(trending.length - 1, currentIdx + 1)
+                    ? Math.min(itemsList.length - 1, currentIdx + 1)
                     : Math.max(0, currentIdx - 1)
 
             container.scrollTo({ top: nextIdx * reelHeight, behavior: 'auto' })
-            const nextId = trending[nextIdx].id
+            const nextId = itemsList[nextIdx].id
             setActiveId(nextId)
-            writeSavedTrailerId(nextId)
+            writeSavedTrailerId(feedMode, nextId)
         }
 
         window.addEventListener('keydown', onKeyDown)
         return () => window.removeEventListener('keydown', onKeyDown)
-    }, [trending])
+    }, [itemsList, feedMode])
 
     function handleVolumeChange(nextVol: number) {
         setVolume(nextVol)
@@ -1211,62 +1287,84 @@ export function TrailersPage({
             myWatchlistIds.has(`${l.media_type}-${l.tmdb_id}`)
     )
 
-    if (loading) {
-        return (
-            <div className="h-[calc(100dvh-96px)] flex items-center justify-center text-xs text-zinc-400">
-                Loading trending trailers...
-            </div>
-        )
-    }
-
-    if (errorMsg) {
-        return (
-            <div className="bg-[#18181F] border border-red-500/30 rounded-2xl p-4 text-xs text-red-300">
-                {errorMsg}
-            </div>
-        )
-    }
-
     return (
         <div className="relative h-[calc(100dvh-96px)] flex flex-col">
-            {matches.length > 0 && (
-                <div className="mb-2 rounded-xl bg-gradient-to-r from-[#FF6B4A]/20 to-[#FF9F43]/20 border border-[#FF6B4A]/40 px-3 py-1.5 flex items-center justify-between text-xs shrink-0">
-          <span className="text-[#FF9F43] font-semibold flex items-center gap-1.5 truncate">
-            <Sparkles className="w-3.5 h-3.5 shrink-0" />
-            Watchlist Match: {matches[0].title} with @{matches[0].profiles?.username}
-          </span>
+            <div className="mb-2 flex items-center justify-between gap-2 shrink-0">
+                <div className="inline-flex items-center gap-1 bg-[#18181F] border border-white/10 p-1 rounded-xl">
+                    <button
+                        type="button"
+                        onClick={() => setFeedMode('for-you')}
+                        className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                            feedMode === 'for-you'
+                                ? 'bg-gradient-to-r from-[#FF6B4A] to-[#FF9F43] text-white'
+                                : 'text-zinc-400 hover:text-white'
+                        }`}
+                    >
+                        <Wand2 className="w-3.5 h-3.5" /> For You
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => setFeedMode('trending')}
+                        className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                            feedMode === 'trending'
+                                ? 'bg-gradient-to-r from-[#FF6B4A] to-[#FF9F43] text-white'
+                                : 'text-zinc-400 hover:text-white'
+                        }`}
+                    >
+                        <Flame className="w-3.5 h-3.5" /> Trending
+                    </button>
+                </div>
+
+                {matches.length > 0 && (
+                    <div className="rounded-xl bg-gradient-to-r from-[#FF6B4A]/20 to-[#FF9F43]/20 border border-[#FF6B4A]/40 px-3 py-1 flex items-center text-xs min-w-0">
+                        <span className="text-[#FF9F43] font-semibold flex items-center gap-1.5 truncate">
+                            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                            Watchlist Match: {matches[0].title} with @{matches[0].profiles?.username}
+                        </span>
+                    </div>
+                )}
+            </div>
+
+            {loading ? (
+                <div className="flex-1 flex items-center justify-center text-xs text-zinc-400">
+                    {feedMode === 'for-you' ? 'Personalizing your reels...' : 'Loading trending trailers...'}
+                </div>
+            ) : errorMsg ? (
+                <div className="bg-[#18181F] border border-red-500/30 rounded-2xl p-4 text-xs text-red-300">
+                    {errorMsg}
+                </div>
+            ) : (
+                <div
+                    ref={scrollRef}
+                    onScroll={handleScroll}
+                    className="flex-1 min-h-0 overflow-y-auto snap-y snap-mandatory overflow-anchor-none"
+                >
+                    {itemsList.map((item) => (
+                        <ReelCard
+                            key={`${feedMode}-${item.media_type}-${item.id}`}
+                            item={item}
+                            isActive={activeId === item.id}
+                            volume={volume}
+                            isMuted={isMuted}
+                            isSaved={myLogs.some(
+                                (l) => l.tmdb_id === item.id && l.media_type === item.media_type
+                            )}
+                            isRefreshing={isRefreshing}
+                            friends={friends}
+                            friendIds={friendIds}
+                            outgoingRequestIds={outgoingRequestIds}
+                            onFollowUser={onFollowUser}
+                            onVolumeChange={handleVolumeChange}
+                            onToggleMute={handleToggleMute}
+                            onRegisterEl={registerEl}
+                            onOpenMedia={onOpenMedia}
+                            onToggleSave={handleToggleSave}
+                            onRefreshReels={handleRefreshReels}
+                        />
+                    ))}
                 </div>
             )}
-
-            <div
-                ref={scrollRef}
-                onScroll={handleScroll}
-                className="flex-1 min-h-0 overflow-y-auto snap-y snap-mandatory overflow-anchor-none"
-            >
-                {trending.map((item) => (
-                    <ReelCard
-                        key={`${item.media_type}-${item.id}`}
-                        item={item}
-                        isActive={activeId === item.id}
-                        volume={volume}
-                        isMuted={isMuted}
-                        isSaved={myLogs.some(
-                            (l) => l.tmdb_id === item.id && l.media_type === item.media_type
-                        )}
-                        isRefreshing={isRefreshing}
-                        friends={friends}
-                        friendIds={friendIds}
-                        outgoingRequestIds={outgoingRequestIds}
-                        onFollowUser={onFollowUser}
-                        onVolumeChange={handleVolumeChange}
-                        onToggleMute={handleToggleMute}
-                        onRegisterEl={registerEl}
-                        onOpenMedia={onOpenMedia}
-                        onToggleSave={handleToggleSave}
-                        onRefreshReels={handleRefreshReels}
-                    />
-                ))}
-            </div>
         </div>
     )
 }

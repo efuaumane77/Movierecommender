@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import type { Profile } from '../types/database'
@@ -8,6 +8,7 @@ interface AuthContextValue {
     session: Session | null
     profile: Profile | null
     loading: boolean
+    refreshProfile: () => Promise<void>
     signOut: () => Promise<void>
 }
 
@@ -19,6 +20,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [profile, setProfile] = useState<Profile | null>(null)
     const [loading, setLoading] = useState(true)
     const initializedRef = useRef(false)
+
+    const refreshProfile = useCallback(async () => {
+        if (!user) return
+        const { data } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single()
+        if (data) {
+            setProfile(data as Profile)
+        }
+    }, [user])
 
     useEffect(() => {
         let mounted = true
@@ -52,7 +65,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setSession(nextSession)
             setUser((prev) => {
                 const nextUser = nextSession?.user ?? null
-                // Keep the same User object reference if ID hasn't changed so workspace doesn't re-fetch/flicker
                 if (prev?.id && nextUser?.id && prev.id === nextUser.id) return prev
                 return nextUser
             })
@@ -80,7 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     return (
-        <AuthContext.Provider value={{ user, session, profile, loading, signOut }}>
+        <AuthContext.Provider value={{ user, session, profile, loading, refreshProfile, signOut }}>
             {children}
         </AuthContext.Provider>
     )

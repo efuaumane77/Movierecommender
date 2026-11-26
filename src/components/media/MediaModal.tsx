@@ -21,7 +21,7 @@ interface MediaModalProps {
 }
 
 export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalProps) {
-    const { user, profile } = useAuth()
+    const { user, profile, refreshProfile } = useAuth()
     const [status, setStatus] = useState<MediaStatus>('watchlist')
     const [rating, setRating] = useState<number>(0)
     const [reviewText, setReviewText] = useState('')
@@ -73,6 +73,12 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
     }, [media, existingLog, user])
 
     if (!media) return null
+
+    const isPinned = Boolean(
+        (profile?.top_favorites ?? []).some(
+            (p) => p.tmdb_id === media.tmdb_id && p.media_type === media.media_type
+        )
+    )
 
     async function handleSave(e: React.FormEvent) {
         e.preventDefault()
@@ -127,25 +133,29 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         }
     }
 
-    async function handlePinToTopFour() {
+    async function handleToggleTopFour() {
         if (!user || !media) return
         setPinMsg(null)
 
         const currentPins: FavoritePin[] = Array.isArray(profile?.top_favorites)
             ? [...profile.top_favorites]
             : []
-        const filtered = currentPins.filter(
-            (p) => !(p.tmdb_id === media.tmdb_id && p.media_type === media.media_type)
-        )
-        const nextPins: FavoritePin[] = [
-            {
-                tmdb_id: media.tmdb_id,
-                media_type: media.media_type,
-                title: media.title,
-                poster_path: media.poster_path,
-            },
-            ...filtered,
-        ].slice(0, 4)
+
+        const nextPins: FavoritePin[] = isPinned
+            ? currentPins.filter(
+                (p) => !(p.tmdb_id === media.tmdb_id && p.media_type === media.media_type)
+            )
+            : [
+                {
+                    tmdb_id: media.tmdb_id,
+                    media_type: media.media_type,
+                    title: media.title,
+                    poster_path: media.poster_path,
+                },
+                ...currentPins.filter(
+                    (p) => !(p.tmdb_id === media.tmdb_id && p.media_type === media.media_type)
+                ),
+            ].slice(0, 4)
 
         const { error } = await supabase
             .from('profiles')
@@ -155,15 +165,19 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
         if (error) {
             setPinMsg(error.message)
         } else {
-            setPinMsg('Pinned to Top 4!')
+            await refreshProfile()
+            setPinMsg(isPinned ? 'Removed from Top 4' : 'Pinned to Top 4!')
             onSaved()
         }
     }
 
+    const cleanFlatrate = (providers?.flatrate ?? []).filter(
+        (p) => !/with ads|amazon channel|apple tv channel/i.test(p.provider_name)
+    )
+
     return (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="w-full max-w-lg max-h-[90dvh] overflow-y-auto bg-[#18181F] border border-white/15 rounded-2xl shadow-2xl">
-                {/* Header */}
                 <div className="flex items-start gap-4 p-5 border-b border-white/10">
                     {media.poster_path ? (
                         <img
@@ -204,25 +218,28 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                             {user && (
                                 <button
                                     type="button"
-                                    onClick={handlePinToTopFour}
-                                    className="inline-flex items-center gap-1 text-xs font-semibold text-amber-400 hover:text-amber-300 cursor-pointer"
+                                    onClick={handleToggleTopFour}
+                                    className={`inline-flex items-center gap-1 text-xs font-semibold cursor-pointer ${
+                                        isPinned
+                                            ? 'text-emerald-400 hover:text-emerald-300'
+                                            : 'text-amber-400 hover:text-amber-300'
+                                    }`}
                                 >
                                     <Award className="w-3.5 h-3.5" />
-                                    {pinMsg ?? 'Pin to Top 4'}
+                                    {pinMsg ?? (isPinned ? 'Pinned in Top 4' : 'Pin to Top 4')}
                                 </button>
                             )}
                         </div>
                     </div>
                 </div>
 
-                {/* Where to Watch Strip */}
-                {providers && providers.flatrate.length > 0 && (
+                {cleanFlatrate.length > 0 && (
                     <div className="px-5 py-2.5 bg-[#14141A] border-b border-white/10 flex items-center justify-between gap-2 flex-wrap">
                         <span className="text-[11px] font-semibold text-zinc-400 flex items-center gap-1.5">
                             <Tv className="w-3.5 h-3.5 text-[#FF9F43]" /> Stream on:
                         </span>
                         <div className="flex items-center gap-1.5 flex-wrap">
-                            {providers.flatrate.map((p) => (
+                            {cleanFlatrate.map((p) => (
                                 <span
                                     key={p.provider_id}
                                     title={p.provider_name}
@@ -240,7 +257,6 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                     </div>
                 )}
 
-                {/* Embedded Trailer */}
                 {showTrailer && trailerKey && (
                     <div className="aspect-video w-full bg-black">
                         <iframe
@@ -253,7 +269,6 @@ export function MediaModal({ media, existingLog, onClose, onSaved }: MediaModalP
                     </div>
                 )}
 
-                {/* Log Form */}
                 <form onSubmit={handleSave} className="p-5 space-y-4">
                     <div>
                         <label className="block text-xs text-zinc-400 mb-1.5">Shelf Status</label>

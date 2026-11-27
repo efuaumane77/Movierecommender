@@ -69,6 +69,7 @@ export function SearchPage({
     const { user, profile } = useAuth()
     const inputRef = useRef<HTMLInputElement | null>(null)
     const [query, setQuery] = useState(initialQuery)
+    const [prevInitialQuery, setPrevInitialQuery] = useState(initialQuery)
     const [selectedGenre, setSelectedGenre] = useState<GenrePreset | null>(null)
     const [activeTab, setActiveTab] = useState<SearchTab>('all')
     const [loading, setLoading] = useState(false)
@@ -94,32 +95,37 @@ export function SearchPage({
     const [discoverUsers, setDiscoverUsers] = useState<Profile[]>([])
     const [recentReviews, setRecentReviews] = useState<ReviewSearchHit[]>([])
 
+    if (initialQuery !== prevInitialQuery) {
+        setPrevInitialQuery(initialQuery)
+        if (initialQuery) setQuery(initialQuery)
+    }
+
     useEffect(() => {
         inputRef.current?.focus()
     }, [])
 
     useEffect(() => {
-        if (initialQuery) setQuery(initialQuery)
-    }, [initialQuery])
-
-    useEffect(() => {
         if (!user) return
+        let cancelled = false
         supabase
             .from('followed_people')
             .select('person_id')
             .eq('user_id', user.id)
             .then(({ data }) => {
+                if (cancelled) return
                 const ids = new Set<number>(
                     ((data as { person_id: number }[]) ?? []).map((r) => Number(r.person_id))
                 )
                 setFollowedPersonIds(ids)
             })
+        return () => {
+            cancelled = true
+        }
     }, [user])
 
     // Load Trending Media, Personalized Cast & Crew, Users, and Recent Reviews on mount
     useEffect(() => {
         let cancelled = false
-        setLoadingExplore(true)
 
         Promise.all([
             getTrending(),
@@ -226,11 +232,14 @@ export function SearchPage({
                     merged.sort(
                         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
                     )
-                    setRecentReviews(merged.slice(0, 8))
+                    if (!cancelled) {
+                        setRecentReviews(merged.slice(0, 8))
+                        setLoadingExplore(false)
+                    }
                 }
             )
-            .catch(console.error)
-            .finally(() => {
+            .catch((err) => {
+                console.error(err)
                 if (!cancelled) setLoadingExplore(false)
             })
 
@@ -244,19 +253,16 @@ export function SearchPage({
         if (!selectedGenre || query.trim()) return
 
         let cancelled = false
-        setLoading(true)
-        setPeopleResults([])
-        setUserResults([])
-        setReviewResults([])
-        setInspectedPerson(null)
-        setPersonWorks([])
 
         discoverByGenre(selectedGenre)
             .then((items) => {
-                if (!cancelled) setMediaResults(items)
+                if (!cancelled) {
+                    setMediaResults(items)
+                    setLoading(false)
+                }
             })
-            .catch(console.error)
-            .finally(() => {
+            .catch((err) => {
+                console.error(err)
                 if (!cancelled) setLoading(false)
             })
 
@@ -268,22 +274,10 @@ export function SearchPage({
     // Live debounced search when query has text (also detects genre words like "horror")
     useEffect(() => {
         const trimmed = query.trim()
-        if (!trimmed) {
-            if (!selectedGenre) {
-                setMediaResults([])
-                setPeopleResults([])
-                setUserResults([])
-                setReviewResults([])
-                setInspectedPerson(null)
-                setPersonWorks([])
-                setLoading(false)
-            }
-            return
-        }
+        if (!trimmed) return
 
         let cancelled = false
         const timer = setTimeout(async () => {
-            setLoading(true)
             const cleanHandle = trimmed.replace(/^@/, '')
             const detectedGenre = matchGenreFromQuery(trimmed)
 
@@ -322,7 +316,6 @@ export function SearchPage({
 
                 if (cancelled) return
 
-                // Put true genre-discovered movies/shows first when user types a genre keyword
                 const mergedMediaMap = new Map<string, TMDBSearchResult>()
                 for (const item of genreHits) {
                     mergedMediaMap.set(`${item.media_type}-${item.id}`, item)
@@ -400,6 +393,19 @@ export function SearchPage({
             clearTimeout(timer)
         }
     }, [query, selectedGenre, user?.id])
+
+    function clearSearchAndGenre() {
+        setQuery('')
+        setSelectedGenre(null)
+        setActiveTab('all')
+        setMediaResults([])
+        setPeopleResults([])
+        setUserResults([])
+        setReviewResults([])
+        setInspectedPerson(null)
+        setPersonWorks([])
+        setLoading(false)
+    }
 
     async function handleToggleFollowPerson(person: TMDBPersonSearchResult) {
         if (!user || togglingPersonId === person.id) return
@@ -511,8 +517,14 @@ export function SearchPage({
                     type="text"
                     value={query}
                     onChange={(e) => {
-                        setQuery(e.target.value)
-                        if (e.target.value.trim()) setSelectedGenre(null)
+                        const val = e.target.value
+                        setQuery(val)
+                        if (val.trim()) {
+                            setSelectedGenre(null)
+                            setLoading(true)
+                        } else {
+                            clearSearchAndGenre()
+                        }
                     }}
                     placeholder="Search titles, genres (e.g. Horror, Sci-Fi), actors, directors, @users..."
                     className="w-full bg-[#18181F] border border-white/15 focus:border-[#FF6B4A] rounded-2xl pl-10 pr-10 py-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none transition"
@@ -520,11 +532,7 @@ export function SearchPage({
                 {(query || selectedGenre) && (
                     <button
                         type="button"
-                        onClick={() => {
-                            setQuery('')
-                            setSelectedGenre(null)
-                            setActiveTab('all')
-                        }}
+                        onClick={clearSearchAndGenre}
                         className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
                     >
                         <X className="w-4 h-4" />
@@ -546,11 +554,17 @@ export function SearchPage({
                                 type="button"
                                 onClick={() => {
                                     if (selectedGenre?.slug === genre.slug) {
-                                        setSelectedGenre(null)
+                                        clearSearchAndGenre()
                                     } else {
                                         setQuery('')
                                         setSelectedGenre(genre)
                                         setActiveTab('media')
+                                        setPeopleResults([])
+                                        setUserResults([])
+                                        setReviewResults([])
+                                        setInspectedPerson(null)
+                                        setPersonWorks([])
+                                        setLoading(true)
                                     }
                                 }}
                                 className={`px-3 py-1 rounded-full text-xs font-semibold transition cursor-pointer shrink-0 ${

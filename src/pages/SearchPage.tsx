@@ -18,9 +18,11 @@ import {
 import {
     getTrending,
     searchMulti,
+    searchCatalog,
     searchPeople,
     getPersonFilmography,
     discoverByGenre,
+    discoverCatalogByGenre,
     matchGenreFromQuery,
     GENRE_PRESETS,
     posterUrl,
@@ -71,6 +73,7 @@ export function SearchPage({
     const [query, setQuery] = useState(initialQuery)
     const [prevInitialQuery, setPrevInitialQuery] = useState(initialQuery)
     const [selectedGenre, setSelectedGenre] = useState<GenrePreset | null>(null)
+    const [wholeCatalog, setWholeCatalog] = useState(false)
     const [activeTab, setActiveTab] = useState<SearchTab>('all')
     const [loading, setLoading] = useState(false)
     const [loadingExplore, setLoadingExplore] = useState(true)
@@ -97,7 +100,10 @@ export function SearchPage({
 
     if (initialQuery !== prevInitialQuery) {
         setPrevInitialQuery(initialQuery)
-        if (initialQuery) setQuery(initialQuery)
+        if (initialQuery) {
+            setQuery(initialQuery)
+            setWholeCatalog(false)
+        }
     }
 
     useEffect(() => {
@@ -250,7 +256,7 @@ export function SearchPage({
 
     // Discover by selected Genre Pill when search bar is empty
     useEffect(() => {
-        if (!selectedGenre || query.trim()) return
+        if (!selectedGenre || query.trim() || wholeCatalog) return
 
         let cancelled = false
 
@@ -269,12 +275,12 @@ export function SearchPage({
         return () => {
             cancelled = true
         }
-    }, [selectedGenre, query])
+    }, [selectedGenre, query, wholeCatalog])
 
     // Live debounced search when query has text (also detects genre words like "horror")
     useEffect(() => {
         const trimmed = query.trim()
-        if (!trimmed) return
+        if (!trimmed || wholeCatalog) return
 
         let cancelled = false
         const timer = setTimeout(async () => {
@@ -392,11 +398,12 @@ export function SearchPage({
             cancelled = true
             clearTimeout(timer)
         }
-    }, [query, selectedGenre, user?.id])
+    }, [query, selectedGenre, wholeCatalog, user?.id])
 
     function clearSearchAndGenre() {
         setQuery('')
         setSelectedGenre(null)
+        setWholeCatalog(false)
         setActiveTab('all')
         setMediaResults([])
         setPeopleResults([])
@@ -405,6 +412,42 @@ export function SearchPage({
         setInspectedPerson(null)
         setPersonWorks([])
         setLoading(false)
+    }
+
+    async function handleLoadWholeCatalog() {
+        const trimmed = query.trim()
+        const genreToLoad = selectedGenre ?? (trimmed ? matchGenreFromQuery(trimmed) : null)
+        if (!trimmed && !genreToLoad) return
+
+        setWholeCatalog(true)
+        setActiveTab('media')
+        setLoading(true)
+
+        try {
+            if (genreToLoad && !trimmed) {
+                const items = await discoverCatalogByGenre(genreToLoad, 3)
+                setMediaResults(items)
+            } else if (genreToLoad && trimmed) {
+                const [genreItems, searchItems] = await Promise.all([
+                    discoverCatalogByGenre(genreToLoad, 3),
+                    searchCatalog(trimmed, 3),
+                ])
+                const map = new Map<string, TMDBSearchResult>()
+                for (const item of genreItems) map.set(`${item.media_type}-${item.id}`, item)
+                for (const item of searchItems) {
+                    const k = `${item.media_type}-${item.id}`
+                    if (!map.has(k)) map.set(k, item)
+                }
+                setMediaResults(Array.from(map.values()))
+            } else {
+                const items = await searchCatalog(trimmed, 3)
+                setMediaResults(items)
+            }
+        } catch (err) {
+            console.error(err)
+        } finally {
+            setLoading(false)
+        }
     }
 
     async function handleToggleFollowPerson(person: TMDBPersonSearchResult) {
@@ -494,9 +537,9 @@ export function SearchPage({
     ]
 
     const showMedia = activeTab === 'all' || activeTab === 'media'
-    const showPeople = !selectedGenre && (activeTab === 'all' || activeTab === 'people')
-    const showUsers = !selectedGenre && (activeTab === 'all' || activeTab === 'users')
-    const showReviews = !selectedGenre && (activeTab === 'all' || activeTab === 'reviews')
+    const showPeople = !selectedGenre && !wholeCatalog && (activeTab === 'all' || activeTab === 'people')
+    const showUsers = !selectedGenre && !wholeCatalog && (activeTab === 'all' || activeTab === 'users')
+    const showReviews = !selectedGenre && !wholeCatalog && (activeTab === 'all' || activeTab === 'reviews')
 
     return (
         <div className="space-y-5">
@@ -509,33 +552,56 @@ export function SearchPage({
                 </p>
             </div>
 
-            {/* Search Input */}
-            <div className="relative">
-                <Search className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                    ref={inputRef}
-                    type="text"
-                    value={query}
-                    onChange={(e) => {
-                        const val = e.target.value
-                        setQuery(val)
-                        if (val.trim()) {
-                            setSelectedGenre(null)
-                            setLoading(true)
-                        } else {
-                            clearSearchAndGenre()
-                        }
-                    }}
-                    placeholder="Search titles, genres (e.g. Horror, Sci-Fi), actors, directors, @users..."
-                    className="w-full bg-[#18181F] border border-white/15 focus:border-[#FF6B4A] rounded-2xl pl-10 pr-10 py-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none transition"
-                />
-                {(query || selectedGenre) && (
+            {/* Search Input + Whole Catalog Button */}
+            <div className="flex items-center gap-2">
+                <div className="relative flex-1 min-w-0">
+                    <Search className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                        ref={inputRef}
+                        type="text"
+                        value={query}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                e.preventDefault()
+                                void handleLoadWholeCatalog()
+                            }
+                        }}
+                        onChange={(e) => {
+                            const val = e.target.value
+                            setQuery(val)
+                            setWholeCatalog(false)
+                            if (val.trim()) {
+                                setSelectedGenre(null)
+                                setLoading(true)
+                            } else {
+                                clearSearchAndGenre()
+                            }
+                        }}
+                        placeholder="Search titles, genres (e.g. Horror, Sci-Fi), actors, directors, @users..."
+                        className="w-full bg-[#18181F] border border-white/15 focus:border-[#FF6B4A] rounded-2xl pl-10 pr-10 py-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none transition"
+                    />
+                    {(query || selectedGenre) && (
+                        <button
+                            type="button"
+                            onClick={clearSearchAndGenre}
+                            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+                    )}
+                </div>
+
+                {isFiltering && (
                     <button
                         type="button"
-                        onClick={clearSearchAndGenre}
-                        className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
+                        onClick={() => void handleLoadWholeCatalog()}
+                        className={`px-3.5 py-3 rounded-2xl text-xs font-semibold border transition cursor-pointer shrink-0 ${
+                            wholeCatalog
+                                ? 'bg-[#FF6B4A] border-[#FF6B4A] text-white'
+                                : 'bg-[#18181F] hover:bg-[#22222C] border-white/15 text-zinc-200 hover:text-white'
+                        }`}
                     >
-                        <X className="w-4 h-4" />
+                        Whole Catalog
                     </button>
                 )}
             </div>
@@ -557,6 +623,7 @@ export function SearchPage({
                                         clearSearchAndGenre()
                                     } else {
                                         setQuery('')
+                                        setWholeCatalog(false)
                                         setSelectedGenre(genre)
                                         setActiveTab('media')
                                         setPeopleResults([])
@@ -610,9 +677,11 @@ export function SearchPage({
 
             {isFiltering && loading ? (
                 <p className="text-xs text-zinc-400 py-4">
-                    {selectedGenre
-                        ? `Loading top ${selectedGenre.label} movies & TV shows...`
-                        : 'Searching media, cast & crew, users, and reviews...'}
+                    {wholeCatalog
+                        ? 'Loading full catalog...'
+                        : selectedGenre
+                            ? `Loading top ${selectedGenre.label} movies & TV shows...`
+                            : 'Searching media, cast & crew, users, and reviews...'}
                 </p>
             ) : !isFiltering && loadingExplore ? (
                 <p className="text-xs text-zinc-400 py-4">
@@ -623,17 +692,19 @@ export function SearchPage({
                     {/* Trending / Genre / Matched Media Section */}
                     {showMedia && (
                         <section className="space-y-2.5">
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
                                 <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
                                     {activeGenreBadge ? (
                                         <>
                                             <Film className="w-3.5 h-3.5 text-[#FF6B4A]" />{' '}
-                                            {activeGenreBadge.label} Movies &amp; TV (
+                                            {activeGenreBadge.label}{' '}
+                                            {wholeCatalog ? 'Full Catalog' : 'Movies & TV'} (
                                             {displayedMedia.length})
                                         </>
                                     ) : isSearching ? (
                                         <>
-                                            <Film className="w-3.5 h-3.5 text-[#FF6B4A]" /> Movies &amp; TV (
+                                            <Film className="w-3.5 h-3.5 text-[#FF6B4A]" />{' '}
+                                            {wholeCatalog ? 'Full Catalog' : 'Movies & TV'} (
                                             {displayedMedia.length})
                                         </>
                                     ) : (
@@ -642,11 +713,23 @@ export function SearchPage({
                                         </>
                                     )}
                                 </h2>
-                                {displayedMedia.length > 0 && (
-                                    <span className="text-[11px] text-zinc-500">
-                                        Click any card to watch trailer
-                                    </span>
-                                )}
+
+                                <div className="flex items-center gap-3">
+                                    {isFiltering && !wholeCatalog && displayedMedia.length > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={() => void handleLoadWholeCatalog()}
+                                            className="text-[11px] font-semibold text-[#FF9F43] hover:text-[#FF6B4A] transition cursor-pointer"
+                                        >
+                                            See Whole Catalog &rarr;
+                                        </button>
+                                    )}
+                                    {displayedMedia.length > 0 && (
+                                        <span className="text-[11px] text-zinc-500">
+                                            Click any card to watch trailer
+                                        </span>
+                                    )}
+                                </div>
                             </div>
 
                             {displayedMedia.length === 0 ? (
@@ -655,7 +738,7 @@ export function SearchPage({
                                 </p>
                             ) : (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                                    {(activeTab === 'all' && !selectedGenre
+                                    {(activeTab === 'all' && !selectedGenre && !wholeCatalog
                                             ? displayedMedia.slice(0, 6)
                                             : displayedMedia
                                     ).map((item) => {

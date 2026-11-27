@@ -306,3 +306,88 @@ export async function discoverByGenre(genre: GenrePreset): Promise<TMDBSearchRes
     }
     return merged.slice(0, 16)
 }
+
+export async function searchCatalog(query: string, pages = 3): Promise<TMDBSearchResult[]> {
+    const trimmed = query.trim()
+    if (!trimmed) return []
+
+    const pageNumbers = Array.from({ length: pages }, (_, i) => i + 1)
+    const responses = await Promise.all(
+        pageNumbers.map((p) =>
+            tmdbFetch<{ results?: TMDBSearchResult[] }>(
+                `/search/multi?query=${encodeURIComponent(trimmed)}&include_adult=false&page=${p}`
+            ).catch(() => ({ results: [] }))
+        )
+    )
+
+    const seen = new Set<string>()
+    const merged: TMDBSearchResult[] = []
+    for (const res of responses) {
+        for (const r of res.results ?? []) {
+            if (r.media_type !== 'movie' && r.media_type !== 'tv') continue
+            const key = `${r.media_type}-${r.id}`
+            if (!seen.has(key)) {
+                seen.add(key)
+                merged.push(r)
+            }
+        }
+    }
+    return merged
+}
+
+export async function discoverCatalogByGenre(
+    genre: GenrePreset,
+    pages = 3
+): Promise<TMDBSearchResult[]> {
+    const movieGenresParam = encodeURIComponent(genre.movieGenreIds.join(','))
+    const tvGenresParam = encodeURIComponent(genre.tvGenreIds.join(','))
+    const pageNumbers = Array.from({ length: pages }, (_, i) => i + 1)
+
+    const [moviePages, tvPages] = await Promise.all([
+        Promise.all(
+            pageNumbers.map((p) =>
+                tmdbFetch<{ results?: Array<Omit<TMDBSearchResult, 'media_type'>> }>(
+                    `/discover/movie?with_genres=${movieGenresParam}&sort_by=popularity.desc&vote_count.gte=100&page=${p}`
+                ).catch(() => ({ results: [] }))
+            )
+        ),
+        Promise.all(
+            pageNumbers.map((p) =>
+                tmdbFetch<{ results?: Array<Omit<TMDBSearchResult, 'media_type'>> }>(
+                    `/discover/tv?with_genres=${tvGenresParam}&sort_by=popularity.desc&vote_count.gte=75&page=${p}`
+                ).catch(() => ({ results: [] }))
+            )
+        ),
+    ])
+
+    const seen = new Set<string>()
+    const movies: TMDBSearchResult[] = []
+    for (const res of moviePages) {
+        for (const m of res.results ?? []) {
+            const key = `movie-${m.id}`
+            if (!seen.has(key)) {
+                seen.add(key)
+                movies.push({ ...m, media_type: 'movie' })
+            }
+        }
+    }
+
+    const shows: TMDBSearchResult[] = []
+    for (const res of tvPages) {
+        for (const t of res.results ?? []) {
+            const key = `tv-${t.id}`
+            if (!seen.has(key)) {
+                seen.add(key)
+                shows.push({ ...t, media_type: 'tv' })
+            }
+        }
+    }
+
+    const merged: TMDBSearchResult[] = []
+    const maxLen = Math.max(movies.length, shows.length)
+    for (let i = 0; i < maxLen; i++) {
+        if (movies[i]) merged.push(movies[i])
+        if (shows[i]) merged.push(shows[i])
+    }
+    return merged
+}

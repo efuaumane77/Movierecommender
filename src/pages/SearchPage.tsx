@@ -13,15 +13,20 @@ import {
     X,
     Flame,
     Wand2,
+    Tag,
 } from 'lucide-react'
 import {
     getTrending,
     searchMulti,
     searchPeople,
     getPersonFilmography,
+    discoverByGenre,
+    matchGenreFromQuery,
+    GENRE_PRESETS,
     posterUrl,
     type TMDBSearchResult,
     type TMDBPersonSearchResult,
+    type GenrePreset,
 } from '../lib/tmdb'
 import { getRecommendedPeople, type RecommendedPerson } from '../lib/recommendations'
 import { supabase } from '../lib/supabase'
@@ -64,12 +69,13 @@ export function SearchPage({
     const { user, profile } = useAuth()
     const inputRef = useRef<HTMLInputElement | null>(null)
     const [query, setQuery] = useState(initialQuery)
+    const [selectedGenre, setSelectedGenre] = useState<GenrePreset | null>(null)
     const [activeTab, setActiveTab] = useState<SearchTab>('all')
     const [loading, setLoading] = useState(false)
     const [loadingExplore, setLoadingExplore] = useState(true)
     const [previewMedia, setPreviewMedia] = useState<SelectedMedia | null>(null)
 
-    // Live search results
+    // Live search & genre results
     const [mediaResults, setMediaResults] = useState<TMDBSearchResult[]>([])
     const [peopleResults, setPeopleResults] = useState<TMDBPersonSearchResult[]>([])
     const [userResults, setUserResults] = useState<Profile[]>([])
@@ -82,7 +88,7 @@ export function SearchPage({
     const [personWorks, setPersonWorks] = useState<TMDBSearchResult[]>([])
     const [loadingPersonWorks, setLoadingPersonWorks] = useState(false)
 
-    // Default Explore / Personalized state when search bar is empty
+    // Default Explore / Personalized state when search bar & genre filter are empty
     const [trendingMedia, setTrendingMedia] = useState<TMDBSearchResult[]>([])
     const [recommendedPeople, setRecommendedPeople] = useState<RecommendedPerson[]>([])
     const [discoverUsers, setDiscoverUsers] = useState<Profile[]>([])
@@ -233,17 +239,45 @@ export function SearchPage({
         }
     }, [user, profile])
 
-    // Live debounced search when query has text
+    // Discover by selected Genre Pill when search bar is empty
+    useEffect(() => {
+        if (!selectedGenre || query.trim()) return
+
+        let cancelled = false
+        setLoading(true)
+        setPeopleResults([])
+        setUserResults([])
+        setReviewResults([])
+        setInspectedPerson(null)
+        setPersonWorks([])
+
+        discoverByGenre(selectedGenre)
+            .then((items) => {
+                if (!cancelled) setMediaResults(items)
+            })
+            .catch(console.error)
+            .finally(() => {
+                if (!cancelled) setLoading(false)
+            })
+
+        return () => {
+            cancelled = true
+        }
+    }, [selectedGenre, query])
+
+    // Live debounced search when query has text (also detects genre words like "horror")
     useEffect(() => {
         const trimmed = query.trim()
         if (!trimmed) {
-            setMediaResults([])
-            setPeopleResults([])
-            setUserResults([])
-            setReviewResults([])
-            setInspectedPerson(null)
-            setPersonWorks([])
-            setLoading(false)
+            if (!selectedGenre) {
+                setMediaResults([])
+                setPeopleResults([])
+                setUserResults([])
+                setReviewResults([])
+                setInspectedPerson(null)
+                setPersonWorks([])
+                setLoading(false)
+            }
             return
         }
 
@@ -251,16 +285,19 @@ export function SearchPage({
         const timer = setTimeout(async () => {
             setLoading(true)
             const cleanHandle = trimmed.replace(/^@/, '')
+            const detectedGenre = matchGenreFromQuery(trimmed)
 
             try {
                 const [
                     tmdbHits,
+                    genreHits,
                     personHits,
                     { data: matchedUsers },
                     { data: matchedMediaLogs },
                     { data: matchedTrailerComments },
                 ] = await Promise.all([
                     searchMulti(trimmed),
+                    detectedGenre ? discoverByGenre(detectedGenre) : Promise.resolve([]),
                     searchPeople(trimmed),
                     supabase
                         .from('profiles')
@@ -285,7 +322,17 @@ export function SearchPage({
 
                 if (cancelled) return
 
-                const topMedia = tmdbHits.slice(0, 12)
+                // Put true genre-discovered movies/shows first when user types a genre keyword
+                const mergedMediaMap = new Map<string, TMDBSearchResult>()
+                for (const item of genreHits) {
+                    mergedMediaMap.set(`${item.media_type}-${item.id}`, item)
+                }
+                for (const item of tmdbHits) {
+                    const key = `${item.media_type}-${item.id}`
+                    if (!mergedMediaMap.has(key)) mergedMediaMap.set(key, item)
+                }
+
+                const topMedia = Array.from(mergedMediaMap.values()).slice(0, 16)
                 setMediaResults(topMedia)
                 setPeopleResults(personHits)
                 setUserResults((matchedUsers as Profile[]) ?? [])
@@ -352,7 +399,7 @@ export function SearchPage({
             cancelled = true
             clearTimeout(timer)
         }
-    }, [query, user?.id])
+    }, [query, selectedGenre, user?.id])
 
     async function handleToggleFollowPerson(person: TMDBPersonSearchResult) {
         if (!user || togglingPersonId === person.id) return
@@ -413,7 +460,11 @@ export function SearchPage({
     }
 
     const isSearching = query.trim().length > 0
-    const displayedMedia = isSearching ? mediaResults : trendingMedia
+    const isFiltering = isSearching || selectedGenre !== null
+    const detectedGenreFromInput = isSearching ? matchGenreFromQuery(query) : null
+    const activeGenreBadge = selectedGenre ?? detectedGenreFromInput
+
+    const displayedMedia = isFiltering ? mediaResults : trendingMedia
     const displayedPeople: (TMDBPersonSearchResult & { reason?: string })[] = isSearching
         ? peopleResults
         : recommendedPeople
@@ -437,9 +488,9 @@ export function SearchPage({
     ]
 
     const showMedia = activeTab === 'all' || activeTab === 'media'
-    const showPeople = activeTab === 'all' || activeTab === 'people'
-    const showUsers = activeTab === 'all' || activeTab === 'users'
-    const showReviews = activeTab === 'all' || activeTab === 'reviews'
+    const showPeople = !selectedGenre && (activeTab === 'all' || activeTab === 'people')
+    const showUsers = !selectedGenre && (activeTab === 'all' || activeTab === 'users')
+    const showReviews = !selectedGenre && (activeTab === 'all' || activeTab === 'reviews')
 
     return (
         <div className="space-y-5">
@@ -448,7 +499,7 @@ export function SearchPage({
                     <Search className="w-5 h-5 text-[#FF6B4A]" /> Explore &amp; Search
                 </h1>
                 <p className="text-xs text-zinc-400 mt-0.5">
-                    Search movies, TV shows, actors, directors, @usernames, and friend reviews
+                    Search movies, TV shows, genres, actors, directors, @usernames, and friend reviews
                 </p>
             </div>
 
@@ -459,19 +510,60 @@ export function SearchPage({
                     ref={inputRef}
                     type="text"
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search titles, actors, directors, @users, or reviews..."
+                    onChange={(e) => {
+                        setQuery(e.target.value)
+                        if (e.target.value.trim()) setSelectedGenre(null)
+                    }}
+                    placeholder="Search titles, genres (e.g. Horror, Sci-Fi), actors, directors, @users..."
                     className="w-full bg-[#18181F] border border-white/15 focus:border-[#FF6B4A] rounded-2xl pl-10 pr-10 py-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none transition"
                 />
-                {query && (
+                {(query || selectedGenre) && (
                     <button
                         type="button"
-                        onClick={() => setQuery('')}
+                        onClick={() => {
+                            setQuery('')
+                            setSelectedGenre(null)
+                            setActiveTab('all')
+                        }}
                         className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
                     >
                         <X className="w-4 h-4" />
                     </button>
                 )}
+            </div>
+
+            {/* Browse by Genre Pills */}
+            <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+                    <span className="text-[11px] font-semibold text-zinc-400 flex items-center gap-1 shrink-0 mr-1">
+                        <Tag className="w-3 h-3 text-[#FF9F43]" /> Genres:
+                    </span>
+                    {GENRE_PRESETS.map((genre) => {
+                        const isSelected = activeGenreBadge?.slug === genre.slug
+                        return (
+                            <button
+                                key={genre.slug}
+                                type="button"
+                                onClick={() => {
+                                    if (selectedGenre?.slug === genre.slug) {
+                                        setSelectedGenre(null)
+                                    } else {
+                                        setQuery('')
+                                        setSelectedGenre(genre)
+                                        setActiveTab('media')
+                                    }
+                                }}
+                                className={`px-3 py-1 rounded-full text-xs font-semibold transition cursor-pointer shrink-0 ${
+                                    isSelected
+                                        ? 'bg-[#FF6B4A] text-white shadow-sm'
+                                        : 'bg-[#18181F] hover:bg-[#22222C] border border-white/10 text-zinc-300 hover:text-white'
+                                }`}
+                            >
+                                {genre.label}
+                            </button>
+                        )
+                    })}
+                </div>
             </div>
 
             {/* Filter Tabs */}
@@ -502,22 +594,30 @@ export function SearchPage({
                 })}
             </div>
 
-            {isSearching && loading ? (
+            {isFiltering && loading ? (
                 <p className="text-xs text-zinc-400 py-4">
-                    Searching media, cast &amp; crew, users, and reviews...
+                    {selectedGenre
+                        ? `Loading top ${selectedGenre.label} movies & TV shows...`
+                        : 'Searching media, cast & crew, users, and reviews...'}
                 </p>
-            ) : !isSearching && loadingExplore ? (
+            ) : !isFiltering && loadingExplore ? (
                 <p className="text-xs text-zinc-400 py-4">
                     Loading personalized cast, trending movies, and reviews...
                 </p>
             ) : (
                 <div className="space-y-6">
-                    {/* Trending / Matched Media Section */}
+                    {/* Trending / Genre / Matched Media Section */}
                     {showMedia && (
                         <section className="space-y-2.5">
                             <div className="flex items-center justify-between">
                                 <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-                                    {isSearching ? (
+                                    {activeGenreBadge ? (
+                                        <>
+                                            <Film className="w-3.5 h-3.5 text-[#FF6B4A]" />{' '}
+                                            {activeGenreBadge.label} Movies &amp; TV (
+                                            {displayedMedia.length})
+                                        </>
+                                    ) : isSearching ? (
                                         <>
                                             <Film className="w-3.5 h-3.5 text-[#FF6B4A]" /> Movies &amp; TV (
                                             {displayedMedia.length})
@@ -528,7 +628,7 @@ export function SearchPage({
                                         </>
                                     )}
                                 </h2>
-                                {!isSearching && displayedMedia.length > 0 && (
+                                {displayedMedia.length > 0 && (
                                     <span className="text-[11px] text-zinc-500">
                                         Click any card to watch trailer
                                     </span>
@@ -541,64 +641,65 @@ export function SearchPage({
                                 </p>
                             ) : (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                                    {(activeTab === 'all' ? displayedMedia.slice(0, 6) : displayedMedia).map(
-                                        (item) => {
-                                            const title = item.title || item.name || 'Untitled'
-                                            const year = (
-                                                item.release_date ||
-                                                item.first_air_date ||
-                                                ''
-                                            ).slice(0, 4)
-                                            const payload: SelectedMedia = {
-                                                tmdb_id: item.id,
-                                                media_type: item.media_type,
-                                                title,
-                                                poster_path: item.poster_path,
-                                                overview: item.overview,
-                                            }
-
-                                            return (
-                                                <div
-                                                    key={`${item.media_type}-${item.id}`}
-                                                    onClick={() => setPreviewMedia(payload)}
-                                                    className="bg-[#18181F] hover:bg-[#1E1E27] border border-white/10 hover:border-[#FF6B4A]/50 rounded-2xl p-2.5 flex items-center gap-3 transition cursor-pointer"
-                                                >
-                                                    {item.poster_path ? (
-                                                        <img
-                                                            src={posterUrl(item.poster_path, 'w185')}
-                                                            alt={title}
-                                                            className="w-11 h-16 rounded-xl object-cover shrink-0"
-                                                        />
-                                                    ) : (
-                                                        <div className="w-11 h-16 rounded-xl bg-[#22222C] shrink-0" />
-                                                    )}
-
-                                                    <div className="min-w-0 flex-1">
-                                                        <p className="text-xs font-bold text-white truncate">
-                                                            {title}
-                                                        </p>
-                                                        <p className="text-[11px] text-zinc-400 mt-0.5">
-                                                            {item.media_type === 'tv' ? 'TV Series' : 'Movie'}
-                                                            {year ? ` • ${year}` : ''}
-                                                            {item.vote_average
-                                                                ? ` • ★ ${item.vote_average.toFixed(1)}`
-                                                                : ''}
-                                                        </p>
-                                                        <button
-                                                            type="button"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation()
-                                                                onOpenMedia(payload)
-                                                            }}
-                                                            className="mt-2 px-2.5 py-1 rounded-lg bg-[#22222C] hover:bg-[#FF6B4A] text-zinc-200 hover:text-white text-[11px] font-semibold inline-flex items-center gap-1 transition cursor-pointer"
-                                                        >
-                                                            <Plus className="w-3 h-3" /> Log / Review
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            )
+                                    {(activeTab === 'all' && !selectedGenre
+                                            ? displayedMedia.slice(0, 6)
+                                            : displayedMedia
+                                    ).map((item) => {
+                                        const title = item.title || item.name || 'Untitled'
+                                        const year = (
+                                            item.release_date ||
+                                            item.first_air_date ||
+                                            ''
+                                        ).slice(0, 4)
+                                        const payload: SelectedMedia = {
+                                            tmdb_id: item.id,
+                                            media_type: item.media_type,
+                                            title,
+                                            poster_path: item.poster_path,
+                                            overview: item.overview,
                                         }
-                                    )}
+
+                                        return (
+                                            <div
+                                                key={`${item.media_type}-${item.id}`}
+                                                onClick={() => setPreviewMedia(payload)}
+                                                className="bg-[#18181F] hover:bg-[#1E1E27] border border-white/10 hover:border-[#FF6B4A]/50 rounded-2xl p-2.5 flex items-center gap-3 transition cursor-pointer"
+                                            >
+                                                {item.poster_path ? (
+                                                    <img
+                                                        src={posterUrl(item.poster_path, 'w185')}
+                                                        alt={title}
+                                                        className="w-11 h-16 rounded-xl object-cover shrink-0"
+                                                    />
+                                                ) : (
+                                                    <div className="w-11 h-16 rounded-xl bg-[#22222C] shrink-0" />
+                                                )}
+
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="text-xs font-bold text-white truncate">
+                                                        {title}
+                                                    </p>
+                                                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                                                        {item.media_type === 'tv' ? 'TV Series' : 'Movie'}
+                                                        {year ? ` • ${year}` : ''}
+                                                        {item.vote_average
+                                                            ? ` • ★ ${item.vote_average.toFixed(1)}`
+                                                            : ''}
+                                                    </p>
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            onOpenMedia(payload)
+                                                        }}
+                                                        className="mt-2 px-2.5 py-1 rounded-lg bg-[#22222C] hover:bg-[#FF6B4A] text-zinc-200 hover:text-white text-[11px] font-semibold inline-flex items-center gap-1 transition cursor-pointer"
+                                                    >
+                                                        <Plus className="w-3 h-3" /> Log / Review
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
                                 </div>
                             )}
                         </section>

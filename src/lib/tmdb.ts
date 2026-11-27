@@ -237,3 +237,72 @@ export async function getTrendingPeople(page = 1): Promise<TMDBPersonSearchResul
                 .slice(0, 3),
         }))
 }
+
+export interface GenrePreset {
+    slug: string
+    label: string
+    movieGenreIds: number[]
+    tvGenreIds: number[]
+    keywords?: string[]
+}
+
+export const GENRE_PRESETS: GenrePreset[] = [
+    { slug: 'action', label: 'Action', movieGenreIds: [28], tvGenreIds: [10759], keywords: ['action'] },
+    { slug: 'horror', label: 'Horror', movieGenreIds: [27], tvGenreIds: [9648, 10765], keywords: ['horror', 'scary'] },
+    { slug: 'sci-fi', label: 'Sci-Fi', movieGenreIds: [878], tvGenreIds: [10765], keywords: ['sci-fi', 'scifi', 'science fiction'] },
+    { slug: 'thrillers', label: 'Thrillers', movieGenreIds: [53], tvGenreIds: [80, 9648], keywords: ['thriller', 'thrillers'] },
+    { slug: 'superheroes', label: 'Superheroes', movieGenreIds: [28, 12, 878], tvGenreIds: [10759, 10765], keywords: ['superhero', 'superheroes', 'marvel', 'dc'] },
+    { slug: 'comedy', label: 'Comedy', movieGenreIds: [35], tvGenreIds: [35], keywords: ['comedy', 'comedies', 'funny'] },
+    { slug: 'drama', label: 'Drama', movieGenreIds: [18], tvGenreIds: [18], keywords: ['drama', 'dramas'] },
+    { slug: 'animation', label: 'Animation', movieGenreIds: [16], tvGenreIds: [16], keywords: ['animation', 'animated', 'anime'] },
+    { slug: 'mystery', label: 'Mystery', movieGenreIds: [9648], tvGenreIds: [9648], keywords: ['mystery', 'mysteries'] },
+    { slug: 'crime', label: 'Crime', movieGenreIds: [80], tvGenreIds: [80], keywords: ['crime', 'gangster'] },
+    { slug: 'romance', label: 'Romance', movieGenreIds: [10749], tvGenreIds: [10749], keywords: ['romance', 'romantic', 'romcom'] },
+    { slug: 'fantasy', label: 'Fantasy', movieGenreIds: [14], tvGenreIds: [10765], keywords: ['fantasy'] },
+]
+
+export function matchGenreFromQuery(rawQuery: string): GenrePreset | null {
+    const normalized = rawQuery.trim().toLowerCase()
+    if (!normalized) return null
+    return (
+        GENRE_PRESETS.find(
+            (g) =>
+                g.slug === normalized ||
+                g.label.toLowerCase() === normalized ||
+                (g.keywords ?? []).includes(normalized)
+        ) ?? null
+    )
+}
+
+export async function discoverByGenre(genre: GenrePreset): Promise<TMDBSearchResult[]> {
+    const movieGenresParam = encodeURIComponent(genre.movieGenreIds.join(','))
+    const tvGenresParam = encodeURIComponent(genre.tvGenreIds.join(','))
+
+    const [moviesData, tvData] = await Promise.all([
+        tmdbFetch<{ results?: Array<Omit<TMDBSearchResult, 'media_type'>> }>(
+            `/discover/movie?with_genres=${movieGenresParam}&sort_by=popularity.desc&vote_count.gte=250&page=1`
+        ),
+        tmdbFetch<{ results?: Array<Omit<TMDBSearchResult, 'media_type'>> }>(
+            `/discover/tv?with_genres=${tvGenresParam}&sort_by=popularity.desc&vote_count.gte=150&page=1`
+        ),
+    ])
+
+    const movies: TMDBSearchResult[] = (moviesData.results ?? [])
+        .filter((m) => Boolean(m.poster_path))
+        .slice(0, 12)
+        .map((m) => ({ ...m, media_type: 'movie' }))
+
+    const shows: TMDBSearchResult[] = (tvData.results ?? [])
+        .filter((t) => Boolean(t.poster_path))
+        .slice(0, 6)
+        .map((t) => ({ ...t, media_type: 'tv' }))
+
+    // Interleave movies and top TV shows so movies lead cleanly
+    const merged: TMDBSearchResult[] = []
+    const maxLen = Math.max(movies.length, shows.length)
+    for (let i = 0; i < maxLen; i++) {
+        if (movies[i]) merged.push(movies[i])
+        if (shows[i]) merged.push(shows[i])
+    }
+    return merged.slice(0, 16)
+}
